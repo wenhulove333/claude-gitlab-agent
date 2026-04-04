@@ -2,3 +2,4 @@ export { isClaudeCommand, extractInstruction, handleClaudeComment, type HandleCo
 export { handleAutoReview, type HandleReviewOptions } from './review.js';
 export { isCreateMRCommand, handleCreateMR, type HandleCreateMROptions } from './create-mr.js';
 export { generateCodeAndCreateMR, type CodeGenerationResult, type GenerateCodeAndMROptions } from './code-generation.js';
+export { analyzeIssue, type AnalyzeIssueResult } from './analyze-issue.js';

@@ -20,7 +20,16 @@
       "Bash(npx tsc:*)",
       "Bash(jobs -l)",
       "Bash(chmod +x test_claude.sh)",
-      "Bash(bash test_claude.sh)"
+      "Bash(bash test_claude.sh)",
+      "Bash(ps -eo pid,ppid)",
+      "Bash(python3:*)",
+      "Bash(xxd)",
+      "Bash(npx ts-node:*)",
+      "Bash(git -C /Users/wenhuzhang/code/claude-gitlab-agent stash)",
+      "Bash(git -C /Users/wenhuzhang/code/claude-gitlab-agent diff HEAD -- src/handlers/comment.ts)",
+      "Bash(git -C /Users/wenhuzhang/code/claude-gitlab-agent show HEAD:src/handlers/comment.ts)",
+      "Bash(git:*)",
+      "Bash(ls -lt /Users/wenhuzhang/code/claude-gitlab-agent/*.log)"
     ]
   }
 }

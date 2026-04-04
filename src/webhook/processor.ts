@@ -8,6 +8,7 @@ import {
   handleAutoReview,
   isCreateMRCommand,
   handleCreateMR,
+  analyzeIssue,
 } from '../handlers/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
 import type {
@@ -61,6 +62,35 @@ export function createWebhookHandlers(): WebhookHandler {
             { event: 'workspace_auto_create_failed', issue_iid: iid, error },
             `Failed to auto-create workspace for Issue #${iid}`
           );
+        }
+
+        // Auto-analyze issue when newly created (not reopened)
+        if (action === 'open') {
+          // Post initial comment that analysis is starting
+          const gitlab = createGitLabClient({
+            baseUrl: getEnv().GITLAB_URL,
+            token: getEnv().GITLAB_ACCESS_TOKEN,
+          });
+          try {
+            await gitlab.issues.createNote(
+              project.id,
+              iid,
+              '🤖 Claude 正在分析 Issue，请稍候...'
+            );
+
+            // Analyze issue in background
+            analyzeIssue(payload).catch((error) => {
+              logger.error(
+                { event: 'analyze_issue_error', issue_iid: iid, error },
+                `Failed to analyze issue: ${error}`
+              );
+            });
+          } catch (noteError) {
+            logger.warn(
+              { event: 'analyze_issue_note_failed', issue_iid: iid, error: noteError },
+              'Failed to post initial analysis note'
+            );
+          }
         }
       } else if (action === 'close') {
         logger.info(

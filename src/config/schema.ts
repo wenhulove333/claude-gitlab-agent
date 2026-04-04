@@ -24,7 +24,8 @@ export const envSchema = z.object({
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
 
   // Claude CLI 配置
-  CLI_TIMEOUT_SECONDS: z.coerce.number().default(300),
+  CLI_TIMEOUT_SECONDS: z.coerce.number().default(120),
+  CLI_HEARTBEAT_INTERVAL: z.coerce.number().default(30),
   USE_DOCKER_ISOLATION: z.coerce.boolean().default(false),
 });
 
