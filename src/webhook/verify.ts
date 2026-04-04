@@ -9,33 +9,32 @@ export interface VerifyOptions {
 export function verifyGitLabWebhook(
   payload: string,
   signature: string | null,
+  gitlabToken: string | null,
   options: VerifyOptions
 ): boolean {
   const { secret, token } = options;
 
-  // If no secret configured, skip verification (not recommended for production)
+  // If no secret/token configured, skip verification (not recommended for production)
   if (!secret && !token) {
     return true;
   }
 
-  // Check token first (X-Gitlab-Token header)
-  if (token && signature) {
-    if (token === signature) {
+  // Check X-Gitlab-Token header (token comparison)
+  if (gitlabToken && token) {
+    if (timingSafeEqual(gitlabToken, token)) {
       return true;
     }
   }
 
-  // Check secret signature (X-Hub-Signature-256 header)
-  if (secret && signature) {
-    if (signature.startsWith('sha256=')) {
-      const expectedSignature = createHmac('sha256', secret)
-        .update(payload, 'utf8')
-        .digest('hex');
-      const providedSignature = signature.slice(7); // Remove 'sha256=' prefix
+  // Check X-Hub-Signature-256 header (HMAC verification)
+  if (secret && signature && signature.startsWith('sha256=')) {
+    const expectedSignature = createHmac('sha256', secret)
+      .update(payload, 'utf8')
+      .digest('hex');
+    const providedSignature = signature.slice(7); // Remove 'sha256=' prefix
 
-      if (timingSafeEqual(expectedSignature, providedSignature)) {
-        return true;
-      }
+    if (timingSafeEqual(expectedSignature, providedSignature)) {
+      return true;
     }
   }
 

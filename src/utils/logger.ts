@@ -1,18 +1,47 @@
 import pino from 'pino';
+import { join } from 'path';
+import { mkdirSync, existsSync } from 'fs';
 
 const isDev = process.env.NODE_ENV !== 'production';
+
+// Ensure logs directory exists
+const logsDir = join(process.cwd(), 'logs');
+if (!existsSync(logsDir)) {
+  mkdirSync(logsDir, { recursive: true });
+}
+
+const logFile = join(logsDir, 'app.log');
 
 export const logger = pino({
   level: isDev ? 'debug' : 'info',
   transport: isDev
     ? {
-        target: 'pino-pretty',
-        options: {
-          colorize: true,
-          translateTime: 'SYS:standard',
-        },
+        targets: [
+          {
+            target: 'pino-pretty',
+            options: {
+              colorize: true,
+              translateTime: 'SYS:standard',
+            },
+            level: 'debug',
+          },
+          {
+            target: 'pino/file',
+            options: {
+              destination: logFile,
+              mkdir: true,
+            },
+            level: 'info',
+          },
+        ],
       }
-    : undefined,
+    : {
+        target: 'pino/file',
+        options: {
+          destination: logFile,
+          mkdir: true,
+        },
+      },
 });
 
 export interface LogFields {

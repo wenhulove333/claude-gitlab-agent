@@ -33,16 +33,31 @@ export function createWebhookServer(options: WebhookServerOptions): Hono {
     const signature = c.req.header('X-Hub-Signature-256') ?? null;
     const gitlabToken = c.req.header('X-Gitlab-Token') ?? null;
 
-    logger.info({ event: 'webhook_received', path: '/webhook' }, 'Webhook received');
+    logger.info({
+      event: 'webhook_received',
+      path: '/webhook',
+      hasSignature: !!signature,
+      hasGitlabToken: !!gitlabToken,
+      webhookSecretConfigured: !!env.WEBHOOK_SECRET,
+      gitlabTokenConfigured: !!env.GITLAB_ACCESS_TOKEN,
+    }, 'Webhook received');
 
     // Verify webhook signature
     try {
-      verifyGitLabWebhook(body, signature, {
+      // X-Gitlab-Token header should match WEBHOOK_SECRET (GitLab's token auth)
+      // X-Hub-Signature-256 header should match WEBHOOK_SECRET (HMAC signature)
+      verifyGitLabWebhook(body, signature, gitlabToken, {
         secret: env.WEBHOOK_SECRET,
-        token: gitlabToken || env.GITLAB_ACCESS_TOKEN,
+        token: env.WEBHOOK_SECRET, // X-Gitlab-Token matches WEBHOOK_SECRET
       });
     } catch (error) {
-      logger.error({ event: 'webhook_verification_failed', error }, 'Webhook verification failed');
+      logger.error({
+        event: 'webhook_verification_failed',
+        error,
+        receivedSignature: signature?.slice(0, 20),
+        receivedGitlabToken: gitlabToken?.slice(0, 10),
+        expectedSecret: env.WEBHOOK_SECRET ? '***configured***' : 'NOT SET',
+      }, 'Webhook verification failed');
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
