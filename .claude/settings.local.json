@@ -16,7 +16,11 @@
       "Bash(timeout 10 claude --print -- \"1+1等于几\")",
       "Bash(claude:*)",
       "Bash(openssl rand:*)",
-      "Bash(kill -9 2568)"
+      "Bash(kill -9 2568)",
+      "Bash(npx tsc:*)",
+      "Bash(jobs -l)",
+      "Bash(chmod +x test_claude.sh)",
+      "Bash(bash test_claude.sh)"
     ]
   }
 }

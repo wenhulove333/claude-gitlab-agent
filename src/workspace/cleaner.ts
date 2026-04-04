@@ -43,7 +43,7 @@ export class WorkspaceCleaner {
         );
 
         try {
-          await this.manager.delete(ws.type, ws.projectId, ws.iid);
+          await this.manager.delete(ws.projectName, ws.type, ws.iid);
           result.deleted++;
         } catch (error) {
           result.failed++;
@@ -76,7 +76,7 @@ export class WorkspaceCleaner {
 
     for (const ws of workspaces) {
       try {
-        await this.manager.delete(ws.type, ws.projectId, ws.iid);
+        await this.manager.delete(ws.projectName, ws.type, ws.iid);
         result.deleted++;
       } catch (error) {
         result.failed++;
