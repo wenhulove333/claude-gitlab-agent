@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "Bash(curl -s http://localhost:3000/health)",
+      "Bash(lsof -ti:3000)",
+      "Bash(xargs kill:*)",
+      "Bash(lsof:*)",
+      "Bash(pkill -f \"tsx watch\")",
+      "Bash(curl:*)",
+      "Bash(claude --version)",
+      "Read(//private/tmp/**)",
+      "Bash(timeout 10 claude --print -- \"1+1等于几\")",
+      "Bash(claude:*)"
+    ]
+  }
+}

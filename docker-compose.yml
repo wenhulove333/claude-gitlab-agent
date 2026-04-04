@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claude-gitlab-agent
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - GITLAB_URL=${GITLAB_URL:-https://gitlab.com}
+      - GITLAB_ACCESS_TOKEN=${GITLAB_ACCESS_TOKEN}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - WORKSPACE_ROOT=/data/workspaces
+      - WORKSPACE_TTL_HOURS=${WORKSPACE_TTL_HOURS:-24}
+      - MAX_WORKSPACES=${MAX_WORKSPACES:-50}
+      - REDIS_URL=redis://redis:6379
+      - CLI_TIMEOUT_SECONDS=${CLI_TIMEOUT_SECONDS:-300}
+    volumes:
+      - workspace_data:/data/workspaces
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: claude-gitlab-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  workspace_data:
+  redis_data:

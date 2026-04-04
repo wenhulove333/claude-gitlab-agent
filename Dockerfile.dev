@@ -1,0 +1,17 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm install
+
+# Install claude CLI globally
+RUN npm install -g @anthropic-ai/claude-code
+
+# Copy source
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]
