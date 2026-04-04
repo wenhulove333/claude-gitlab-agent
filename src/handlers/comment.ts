@@ -1,6 +1,7 @@
 import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
+import { WorkspaceManager } from '../workspace/manager.js';
 import type { NoteWebhookPayload } from '../webhook/types.js';
 import type { Note } from '../gitlab/types.js';
 import { getEnv } from '../config/index.js';
@@ -128,7 +129,7 @@ export async function handleClaudeComment(
     `Received @claude command: ${instruction.slice(0, 100)}...`
   );
 
-  // Post initial "processing" comment
+  // Get env and create gitlab client early (needed for workspace setup and error reporting)
   const env = getEnv();
   const gitlab = createGitLabClient({
     baseUrl: env.GITLAB_URL,
@@ -139,6 +140,69 @@ export async function handleClaudeComment(
   const noteableIid = noteableType === 'Issue'
     ? payload.issue?.iid || 0
     : payload.merge_request?.iid || 0;
+
+  // Determine workspace path based on noteable type
+  let workingDirectory: string | undefined;
+  try {
+    const workspaceManager = new WorkspaceManager();
+    const workspaceType = noteableType === 'Issue' ? 'issue' : 'mr';
+    const exists = await workspaceManager.exists(project.name, workspaceType, noteableIid);
+    if (exists) {
+      const status = await workspaceManager.getStatus(project.name, workspaceType, noteableIid);
+      if (status.exists) {
+        workingDirectory = status.path;
+        logDebug(
+          { event: 'workspace_selected', workspacePath: workingDirectory, noteableType, noteableIid },
+          `Using workspace for ${noteableType} #${noteableIid}`
+        );
+      }
+    }
+
+    // If workspace doesn't exist, create it
+    if (!workingDirectory) {
+      logInfo(
+        { event: 'workspace_not_found', noteableType, noteableIid, projectName: project.name },
+        `Workspace not found for ${noteableType} #${noteableIid}, creating...`
+      );
+      const workspace = await workspaceManager.getOrCreate({
+        type: workspaceType,
+        projectId: project.id,
+        projectName: project.name,
+        iid: noteableIid,
+        repoUrl: project.git_http_url.replace(
+          'http://',
+          `http://oauth2:${env.GITLAB_ACCESS_TOKEN}@`
+        ),
+        defaultBranch: project.default_branch,
+      });
+      workingDirectory = workspace.path;
+      logInfo(
+        { event: 'workspace_created_for_comment', workspacePath: workingDirectory },
+        `Workspace created for comment`
+      );
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logWarn({ event: 'workspace_setup_failed', noteableType, noteableIid, error: errorMessage }, 'Failed to setup workspace');
+    // Post error to user and return
+    try {
+      await gitlab.notes.create(
+        project.id,
+        noteableIid,
+        `🤖 Claude：工作空间准备失败：${errorMessage}\n\n请稍后重试。`,
+        noteableType
+      );
+    } catch {}
+    return;
+  }
+
+  // Post initial "processing" comment
+  try {
+    await gitlab.notes.create(project.id, noteableIid, '🤖 Claude 正在处理，请稍候...', noteableType);
+  } catch (postError) {
+    const postErrorMsg = postError instanceof Error ? postError.message : String(postError);
+    logWarn({ event: 'initial_comment_post_failed', error: postErrorMsg }, 'Failed to post initial processing comment');
+  }
 
   // Fetch conversation history
   let history: Note[] = [];
@@ -154,9 +218,6 @@ export async function handleClaudeComment(
   }
 
   try {
-    // Post initial response
-    await gitlab.notes.create(project.id, noteableIid, '🤖 Claude 正在处理，请稍候...', noteableType);
-
     // Build prompt and call Claude CLI
     const prompt = buildPrompt(payload, instruction, history);
     const cli = getClaudeCLI();
@@ -166,6 +227,7 @@ export async function handleClaudeComment(
     const response = await cli.prompt(prompt, {
       systemPrompt,
       timeout: 60, // 60 seconds for Q&A
+      workingDirectory,
     });
 
     // Format response
@@ -212,9 +274,10 @@ ${response}`;
         noteableType
       );
     } catch (postError) {
+      const postErrorMessage = postError instanceof Error ? postError.message : String(postError);
       logError(
-        { event: 'claude_error_post_failed', project_id: project.id },
-        'Failed to post error response'
+        { event: 'claude_error_post_failed', project_id: project.id, noteableIid, noteableType, error: postErrorMessage },
+        `Failed to post error response: ${postErrorMessage}`
       );
     }
   }

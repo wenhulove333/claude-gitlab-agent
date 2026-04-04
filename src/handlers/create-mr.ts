@@ -178,6 +178,7 @@ export async function handleCreateMR(
     const workspace = await workspaceManager.getOrCreate({
       type: 'issue',
       projectId: project.id,
+      projectName: project.name,
       iid,
       repoUrl: project.git_http_url.replace('http://', `http://oauth2:${env.GITLAB_ACCESS_TOKEN}@`),
       defaultBranch: project.default_branch,

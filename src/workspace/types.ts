@@ -4,6 +4,7 @@ export interface WorkspaceInfo {
   id: string;
   type: WorkspaceType;
   projectId: number;
+  projectName: string;
   iid: number;
   path: string;
   createdAt: Date;
@@ -13,6 +14,7 @@ export interface WorkspaceInfo {
 export interface CreateWorkspaceOptions {
   type: WorkspaceType;
   projectId: number;
+  projectName: string;
   iid: number;
   repoUrl: string;
   defaultBranch: string;

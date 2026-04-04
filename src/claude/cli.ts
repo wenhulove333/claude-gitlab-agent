@@ -1,19 +1,25 @@
 import { spawn } from 'child_process';
 import { ClaudeCLIError } from '../utils/errors.js';
-import { logDebug, logError } from '../utils/logger.js';
+import { logDebug, logError, logInfo } from '../utils/logger.js';
 import { getEnv } from '../config/index.js';
 import type { ClaudeCLIOptions, ClaudeCLIResult, ClaudePromptOptions } from './types.js';
 
 const DEFAULT_TIMEOUT = 300; // 5 minutes
+const DEFAULT_HEARTBEAT_INTERVAL = 30; // 30 seconds of no output = might be stuck
+const DEFAULT_QUIET_TIMEOUT = 60; // 60 seconds of no output = definitely stuck
 
 export class ClaudeCLI {
   private timeout: number;
   private cliPath: string;
+  private heartbeatInterval: number;
+  private quietTimeout: number;
 
-  constructor(options: { timeout?: number; cliPath?: string } = {}) {
+  constructor(options: { timeout?: number; cliPath?: string; heartbeatInterval?: number; quietTimeout?: number } = {}) {
     const env = getEnv();
     this.timeout = options.timeout ?? env.CLI_TIMEOUT_SECONDS ?? DEFAULT_TIMEOUT;
     this.cliPath = options.cliPath ?? 'claude';
+    this.heartbeatInterval = options.heartbeatInterval ?? DEFAULT_HEARTBEAT_INTERVAL;
+    this.quietTimeout = options.quietTimeout ?? DEFAULT_QUIET_TIMEOUT;
   }
 
   /**
@@ -38,7 +44,13 @@ export class ClaudeCLI {
         cwd,
         timeout,
       },
-      `Executing Claude CLI: ${args.join(' ')}`
+      `Executing Claude CLI: claude ${args.join(' ')}`
+    );
+
+    // Also log as info for easy debugging
+    logInfo(
+      { event: 'claude_command', cwd, command: `claude ${args.join(' ')}` },
+      `Running: claude ${args.join(' ')} in ${cwd}`
     );
 
     return new Promise((resolve) => {
@@ -54,30 +66,67 @@ export class ClaudeCLI {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
+      // Immediately close stdin to prevent hanging
+      proc.stdin?.end();
+
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      let lastOutputTime = Date.now();
+      let heartbeatTimer: NodeJS.Timeout | null = null;
+      let completed = false;
+
+      // Heartbeat: log progress if no output for a while
+      const startTime = Date.now();
+      const checkHeartbeat = () => {
+        if (completed) return;
+        const quietFor = (Date.now() - lastOutputTime) / 1000;
+        const totalFor = (Date.now() - startTime) / 1000;
+        if (quietFor >= this.quietTimeout) {
+          logInfo(
+            { event: 'claude_cli_heartbeat', quietFor: Math.round(quietFor), totalFor: Math.round(totalFor), stdoutLength: stdout.length },
+            `Claude CLI is still working... (quiet for ${Math.round(quietFor)}s, total ${Math.round(totalFor)}s)`
+          );
+        }
+      };
+
+      heartbeatTimer = setInterval(checkHeartbeat, this.heartbeatInterval * 1000);
+
+      const cleanup = () => {
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+      };
 
       const timer = setTimeout(() => {
         timedOut = true;
+        completed = true;
+        cleanup();
         proc.kill('SIGTERM');
         logError(
-          { event: 'claude_cli_timeout', args, timeout },
-          `Claude CLI timed out after ${timeout}s`
+          { event: 'claude_cli_timeout', cwd, args, timeout, stdoutLength: stdout.length },
+          `Claude CLI timed out after ${timeout}s in ${cwd}: claude ${args.join(' ')}`
         );
       }, timeout * 1000);
 
       proc.stdout?.on('data', (data) => {
+        lastOutputTime = Date.now();
         stdout += data.toString();
       });
 
       proc.stderr?.on('data', (data) => {
+        lastOutputTime = Date.now();
         stderr += data.toString();
       });
 
       proc.on('close', (code) => {
+        if (completed) return;
+        completed = true;
+        cleanup();
         clearTimeout(timer);
         const exitCode = code ?? 0;
+        const totalFor = (Date.now() - startTime) / 1000;
 
         logDebug(
           {
@@ -86,8 +135,9 @@ export class ClaudeCLI {
             exitCode,
             timedOut,
             stdoutLength: stdout.length,
+            totalFor: Math.round(totalFor),
           },
-          `Claude CLI completed with exit code ${exitCode}`
+          `Claude CLI completed with exit code ${exitCode} after ${Math.round(totalFor)}s`
         );
 
         resolve({
@@ -99,6 +149,9 @@ export class ClaudeCLI {
       });
 
       proc.on('error', (error) => {
+        if (completed) return;
+        completed = true;
+        cleanup();
         clearTimeout(timer);
         logError(
           { event: 'claude_cli_error', args, error: error.message },
@@ -127,7 +180,7 @@ export class ClaudeCLI {
       env,
     } = options;
 
-    const args = ['--print'];
+    const args = ['--print', '--dangerously-skip-permissions'];
 
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
@@ -141,7 +194,7 @@ export class ClaudeCLI {
       args.push('--model', model);
     }
 
-    args.push('--', prompt);
+    args.push('--', prompt); // Use -- to separate flags from prompt
 
     const result = await this.execute(args, {
       workingDirectory,

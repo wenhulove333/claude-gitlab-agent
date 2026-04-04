@@ -17,24 +17,26 @@ export class WorkspaceManager {
   }
 
   /**
-   * Generate workspace ID
+   * Generate workspace ID with format: <project-name>-<issue|mr>-<number>
+   * Example: myproject-issue-123, myproject-mr-456
    */
-  generateId(type: 'issue' | 'mr', projectId: number, iid: number): string {
-    return `workspace-${type}-${projectId}-${iid}`;
+  generateId(projectName: string, type: 'issue' | 'mr', iid: number): string {
+    const sanitizedName = projectName.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-');
+    return `${sanitizedName}-${type}-${iid}`;
   }
 
   /**
    * Get workspace path
    */
-  getPath(type: 'issue' | 'mr', projectId: number, iid: number): string {
-    return join(this.root, this.generateId(type, projectId, iid));
+  getPath(projectName: string, type: 'issue' | 'mr', iid: number): string {
+    return join(this.root, this.generateId(projectName, type, iid));
   }
 
   /**
    * Check if workspace exists
    */
-  async exists(type: 'issue' | 'mr', projectId: number, iid: number): Promise<boolean> {
-    const path = this.getPath(type, projectId, iid);
+  async exists(projectName: string, type: 'issue' | 'mr', iid: number): Promise<boolean> {
+    const path = this.getPath(projectName, type, iid);
     try {
       await fs.access(path);
       return true;
@@ -46,8 +48,8 @@ export class WorkspaceManager {
   /**
    * Get workspace status
    */
-  async getStatus(type: 'issue' | 'mr', projectId: number, iid: number): Promise<WorkspaceStatus> {
-    const path = this.getPath(type, projectId, iid);
+  async getStatus(projectName: string, type: 'issue' | 'mr', iid: number): Promise<WorkspaceStatus> {
+    const path = this.getPath(projectName, type, iid);
 
     try {
       await fs.stat(path);
@@ -84,20 +86,30 @@ export class WorkspaceManager {
    * Create or reuse workspace
    */
   async getOrCreate(options: CreateWorkspaceOptions): Promise<WorkspaceInfo> {
-    const { type, projectId, iid, repoUrl, defaultBranch } = options;
-    const workspaceId = this.generateId(type, projectId, iid);
-    const path = this.getPath(type, projectId, iid);
+    const { type, projectId, projectName, iid, repoUrl, defaultBranch } = options;
+    const workspaceId = this.generateId(projectName, type, iid);
+    const path = this.getPath(projectName, type, iid);
 
     logInfo(
-      { event: 'workspace_get_or_create', workspaceId, type, projectId, iid },
+      { event: 'workspace_get_or_create', workspaceId, type, projectId, projectName, iid },
       `Getting or creating workspace: ${workspaceId}`
     );
 
     // Check if workspace already exists
-    const existing = await this.exists(type, projectId, iid);
+    const existing = await this.exists(projectName, type, iid);
     if (existing) {
       logDebug({ event: 'workspace_reuse', workspaceId }, 'Reusing existing workspace');
-      return this.resetWorkspace(type, projectId, iid, defaultBranch);
+      if (type === 'mr') {
+        // For MRs, don't reset to defaultBranch - keep current branch (source branch)
+        // Just fetch to update all refs
+        const git: SimpleGit = simpleGit(path);
+        await git.fetch();
+        const info = await this.getInfo(projectName, type, projectId, iid);
+        info.lastUsedAt = new Date();
+        logInfo({ event: 'workspace_reused_mr', workspaceId }, 'Workspace reused for MR, skipped reset to default');
+        return info;
+      }
+      return this.resetWorkspace(projectName, type, projectId, iid, defaultBranch);
     }
 
     // Check workspace limit
@@ -113,7 +125,7 @@ export class WorkspaceManager {
       await git.clone(repoUrl, path, ['--depth=1', '--branch', defaultBranch]);
     } catch (error) {
       // Clean up on failure
-      await this.delete(type, projectId, iid).catch(() => {});
+      await this.delete(projectName, type, iid).catch(() => {});
       throw new WorkspaceError(`Failed to clone repository: ${error}`);
     }
 
@@ -121,6 +133,7 @@ export class WorkspaceManager {
       id: workspaceId,
       type,
       projectId,
+      projectName,
       iid,
       path,
       createdAt: new Date(),
@@ -134,9 +147,15 @@ export class WorkspaceManager {
   /**
    * Reset workspace to clean state (git fetch + reset)
    */
-  async resetWorkspace(type: 'issue' | 'mr', projectId: number, iid: number, defaultBranch: string): Promise<WorkspaceInfo> {
-    const workspaceId = this.generateId(type, projectId, iid);
-    const path = this.getPath(type, projectId, iid);
+  async resetWorkspace(
+    projectName: string,
+    type: 'issue' | 'mr',
+    projectId: number,
+    iid: number,
+    defaultBranch: string
+  ): Promise<WorkspaceInfo> {
+    const workspaceId = this.generateId(projectName, type, iid);
+    const path = this.getPath(projectName, type, iid);
 
     logDebug({ event: 'workspace_reset', workspaceId, defaultBranch }, 'Resetting workspace to clean state');
 
@@ -148,7 +167,7 @@ export class WorkspaceManager {
       await git.reset(['--hard', `origin/${defaultBranch}`]);
 
       // Update last used time
-      const info = await this.getInfo(type, projectId, iid);
+      const info = await this.getInfo(projectName, type, projectId, iid);
       info.lastUsedAt = new Date();
 
       logInfo({ event: 'workspace_reset_complete', workspaceId }, 'Workspace reset complete');
@@ -163,9 +182,9 @@ export class WorkspaceManager {
   /**
    * Get workspace info
    */
-  async getInfo(type: 'issue' | 'mr', projectId: number, iid: number): Promise<WorkspaceInfo> {
-    const workspaceId = this.generateId(type, projectId, iid);
-    const path = this.getPath(type, projectId, iid);
+  async getInfo(projectName: string, type: 'issue' | 'mr', projectId: number, iid: number): Promise<WorkspaceInfo> {
+    const workspaceId = this.generateId(projectName, type, iid);
+    const path = this.getPath(projectName, type, iid);
 
     const stat = await fs.stat(path);
 
@@ -173,6 +192,7 @@ export class WorkspaceManager {
       id: workspaceId,
       type,
       projectId,
+      projectName,
       iid,
       path,
       createdAt: stat.birthtime,
@@ -183,9 +203,9 @@ export class WorkspaceManager {
   /**
    * Delete workspace
    */
-  async delete(type: 'issue' | 'mr', projectId: number, iid: number): Promise<void> {
-    const workspaceId = this.generateId(type, projectId, iid);
-    const path = this.getPath(type, projectId, iid);
+  async delete(projectName: string, type: 'issue' | 'mr', iid: number): Promise<void> {
+    const workspaceId = this.generateId(projectName, type, iid);
+    const path = this.getPath(projectName, type, iid);
 
     logInfo({ event: 'workspace_delete', workspaceId }, 'Deleting workspace');
 
@@ -215,7 +235,7 @@ export class WorkspaceManager {
       const toDelete = sorted.slice(0, Math.ceil(this.maxWorkspaces * 0.2)); // Delete 20%
 
       for (const ws of toDelete) {
-        await this.delete(ws.type, ws.projectId, ws.iid).catch(() => {});
+        await this.delete(ws.projectName, ws.type, ws.iid).catch(() => {});
       }
     }
   }
@@ -229,16 +249,20 @@ export class WorkspaceManager {
       const workspaces: WorkspaceInfo[] = [];
 
       for (const entry of entries) {
-        if (entry.isDirectory() && entry.name.startsWith('workspace-')) {
+        if (entry.isDirectory() && entry.name.includes('-issue-') || entry.name.includes('-mr-')) {
+          // Parse directory name: <project-name>-<issue|mr>-<number>
           const parts = entry.name.split('-');
-          if (parts.length >= 4) {
-            const type = parts[1] as 'issue' | 'mr';
-            const projectId = parseInt(parts[2], 10);
-            const iid = parseInt(parts[3], 10);
+          if (parts.length >= 3) {
+            const typeStr = parts[parts.length - 2] as 'issue' | 'mr';
+            const iidStr = parts[parts.length - 1];
+            const type = typeStr === 'issue' || typeStr === 'mr' ? typeStr : null;
+            const iid = parseInt(iidStr, 10);
+            const projectName = parts.slice(0, -2).join('-');
 
-            if (!isNaN(projectId) && !isNaN(iid)) {
+            if (type && !isNaN(iid)) {
               try {
-                const info = await this.getInfo(type, projectId, iid);
+                // We don't have projectId here, use 0 as placeholder
+                const info = await this.getInfo(projectName, type, 0, iid);
                 workspaces.push(info);
               } catch {
                 // Skip invalid workspaces
@@ -257,13 +281,13 @@ export class WorkspaceManager {
   /**
    * Get workspace git instance
    */
-  async getGit(type: 'issue' | 'mr', projectId: number, iid: number): Promise<SimpleGit> {
-    const exists = await this.exists(type, projectId, iid);
+  async getGit(projectName: string, type: 'issue' | 'mr', iid: number): Promise<SimpleGit> {
+    const exists = await this.exists(projectName, type, iid);
     if (!exists) {
-      throw new WorkspaceError(`Workspace does not exist: ${this.generateId(type, projectId, iid)}`);
+      throw new WorkspaceError(`Workspace does not exist: ${this.generateId(projectName, type, iid)}`);
     }
 
-    const path = this.getPath(type, projectId, iid);
+    const path = this.getPath(projectName, type, iid);
     return simpleGit(path);
   }
 }

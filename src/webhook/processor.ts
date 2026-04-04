@@ -9,6 +9,7 @@ import {
   isCreateMRCommand,
   handleCreateMR,
 } from '../handlers/index.js';
+import { WorkspaceManager } from '../workspace/manager.js';
 import type {
   IssueWebhookPayload,
   MRWebhookPayload,
@@ -22,8 +23,9 @@ import type { WebhookHandler } from './router.js';
 export function createWebhookHandlers(): WebhookHandler {
   return {
     onIssue: async (payload: IssueWebhookPayload) => {
-      const { action } = payload.object_attributes;
+      const { action, iid } = payload.object_attributes;
       const project = payload.project;
+      const workspaceManager = new WorkspaceManager();
 
       // Handle issue events
       if (action === 'open' || action === 'reopen') {
@@ -32,15 +34,64 @@ export function createWebhookHandlers(): WebhookHandler {
             event: 'issue_action',
             action,
             project_id: project.id,
-            issue_iid: payload.object_attributes.iid,
+            issue_iid: iid,
           },
-          `Issue ${action}: #${payload.object_attributes.iid}`
+          `Issue ${action}: #${iid}`
         );
+
+        // Auto-create workspace for new/reopened issues
+        try {
+          const workspace = await workspaceManager.getOrCreate({
+            type: 'issue',
+            projectId: project.id,
+            projectName: project.name,
+            iid,
+            repoUrl: project.git_http_url.replace(
+              'http://',
+              `http://oauth2:${getEnv().GITLAB_ACCESS_TOKEN}@`
+            ),
+            defaultBranch: project.default_branch,
+          });
+          logger.info(
+            { event: 'workspace_auto_created', workspace_id: workspace.id, issue_iid: iid },
+            `Workspace auto-created for Issue #${iid}`
+          );
+        } catch (error) {
+          logger.error(
+            { event: 'workspace_auto_create_failed', issue_iid: iid, error },
+            `Failed to auto-create workspace for Issue #${iid}`
+          );
+        }
+      } else if (action === 'close') {
+        logger.info(
+          {
+            event: 'issue_closed',
+            project_id: project.id,
+            issue_iid: iid,
+          },
+          `Issue closed: #${iid}`
+        );
+
+        // Auto-delete workspace when issue is closed
+        try {
+          await workspaceManager.delete(project.name, 'issue', iid);
+          logger.info(
+            { event: 'workspace_auto_deleted', issue_iid: iid },
+            `Workspace auto-deleted for Issue #${iid}`
+          );
+        } catch (error) {
+          logger.warn(
+            { event: 'workspace_auto_delete_failed', issue_iid: iid, error },
+            `Failed to auto-delete workspace for Issue #${iid}`
+          );
+        }
       }
     },
 
     onMergeRequest: async (payload: MRWebhookPayload) => {
-      const { action } = payload.object_attributes;
+      const { action, iid, source_branch } = payload.object_attributes;
+      const project = payload.project;
+      const workspaceManager = new WorkspaceManager();
 
       // Get project settings (simplified)
       const projectSettings = {
@@ -50,14 +101,93 @@ export function createWebhookHandlers(): WebhookHandler {
 
       const botUsername = 'claude'; // This should come from project settings
 
-      // Handle auto review
+      // Handle auto review and workspace for open/reopen
       if (action === 'open' || action === 'reopen') {
+        logger.info(
+          {
+            event: 'mr_action',
+            action,
+            project_id: project.id,
+            mr_iid: iid,
+          },
+          `MR ${action}: #${iid}`
+        );
+
+        // Auto-create workspace for new/reopened MRs
+        try {
+          // For MRs, try to clone the source branch directly if it exists
+          // This ensures the workspace starts on the MR's branch
+          const cloneBranch = source_branch || project.default_branch;
+          const workspace = await workspaceManager.getOrCreate({
+            type: 'mr',
+            projectId: project.id,
+            projectName: project.name,
+            iid,
+            repoUrl: project.git_http_url.replace(
+              'http://',
+              `http://oauth2:${getEnv().GITLAB_ACCESS_TOKEN}@`
+            ),
+            defaultBranch: cloneBranch,
+          });
+          logger.info(
+            { event: 'workspace_auto_created', workspace_id: workspace.id, mr_iid: iid, cloneBranch },
+            `Workspace auto-created for MR #${iid} (cloned branch: ${cloneBranch})`
+          );
+
+          // If we cloned default branch but MR has a source branch, checkout to it
+          if (source_branch && cloneBranch !== source_branch) {
+            try {
+              const git = await workspaceManager.getGit(project.name, 'mr', iid);
+              await git.fetch('origin', source_branch);
+              await git.checkout(source_branch);
+              logger.info(
+                { event: 'workspace_checkout_branch', workspace_id: workspace.id, source_branch },
+                `Workspace checked out to branch ${source_branch}`
+              );
+            } catch (checkoutError) {
+              logger.warn(
+                { event: 'workspace_checkout_failed', workspace_id: workspace.id, source_branch, error: checkoutError },
+                `Failed to checkout branch ${source_branch} in workspace`
+              );
+            }
+          }
+        } catch (error) {
+          logger.error(
+            { event: 'workspace_auto_create_failed', mr_iid: iid, error },
+            `Failed to auto-create workspace for MR #${iid}`
+          );
+        }
+
         await handleAutoReview({
           payload,
           botUsername,
           maxFiles: 20,
           projectSettings,
         });
+      } else if (action === 'merge' || action === 'close') {
+        logger.info(
+          {
+            event: 'mr_closed_merged',
+            action,
+            project_id: project.id,
+            mr_iid: iid,
+          },
+          `MR ${action}: #${iid}`
+        );
+
+        // Auto-delete workspace when MR is merged or closed
+        try {
+          await workspaceManager.delete(project.name, 'mr', iid);
+          logger.info(
+            { event: 'workspace_auto_deleted', mr_iid: iid },
+            `Workspace auto-deleted for MR #${iid}`
+          );
+        } catch (error) {
+          logger.warn(
+            { event: 'workspace_auto_delete_failed', mr_iid: iid, error },
+            `Failed to auto-delete workspace for MR #${iid}`
+          );
+        }
       }
     },
 
