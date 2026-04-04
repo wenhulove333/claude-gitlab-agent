@@ -14,7 +14,9 @@
       "Bash(claude --version)",
       "Read(//private/tmp/**)",
       "Bash(timeout 10 claude --print -- \"1+1等于几\")",
-      "Bash(claude:*)"
+      "Bash(claude:*)",
+      "Bash(openssl rand:*)",
+      "Bash(kill -9 2568)"
     ]
   }
 }

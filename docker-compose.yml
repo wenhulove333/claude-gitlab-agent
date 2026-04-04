@@ -32,7 +32,7 @@ services:
       start_period: 10s
 
   redis:
-    image: redis:7-alpine
+    image: docker.cnb.cool/ssstudio.ss/culture-tourism/wenzhou-openeuler-env-setup/redis:latest
     container_name: claude-gitlab-redis
     ports:
       - "6379:6379"

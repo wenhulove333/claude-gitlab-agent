@@ -5,14 +5,17 @@
 ## 功能特性
 
 ### 1. @claude 智能问答
+
 - 在 Issue 或 MR 评论中 `@claude <指令>` 触发
 - 支持代码解释、错误分析、单元测试生成、代码优化建议
 
 ### 2. 自动代码审查
+
 - MR 创建或重新打开时自动触发
 - 输出结构化审查意见（🔴 阻塞 / 🟡 建议 / 🟢 优化）
 
 ### 3. 基于 Issue 创建 MR
+
 - `@claude /create-mr` 或等效自然语言触发
 - Claude 分析 Issue、生成代码、创建分支和 MR
 
@@ -139,23 +142,23 @@ src/
 
 ## API 端点
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
+| 端点         | 方法   | 说明                |
+| ---------- | ---- | ----------------- |
 | `/webhook` | POST | GitLab Webhook 接收 |
-| `/health` | GET | 健康检查 |
-| `/metrics` | GET | Prometheus 指标 |
+| `/health`  | GET  | 健康检查              |
+| `/metrics` | GET  | Prometheus 指标     |
 
 ## 项目级配置
 
 在 GitLab 项目中设置 CI/CD 变量：
 
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| `CLAUDE_ENABLED` | true | 是否启用 Claude |
-| `CLAUDE_AUTO_REVIEW_ENABLED` | true | 是否启用自动审查 |
-| `CLAUDE_CREATE_MR_ENABLED` | false | 是否允许创建 MR |
-| `CLAUDE_BOT_USERNAME` | claude-bot | Bot 用户名 |
-| `CLAUDE_MAX_REVIEW_FILES` | 20 | 最大审查文件数 |
+| 变量名                          | 默认值        | 说明          |
+| ---------------------------- | ---------- | ----------- |
+| `CLAUDE_ENABLED`             | true       | 是否启用 Claude |
+| `CLAUDE_AUTO_REVIEW_ENABLED` | true       | 是否启用自动审查    |
+| `CLAUDE_CREATE_MR_ENABLED`   | false      | 是否允许创建 MR   |
+| `CLAUDE_BOT_USERNAME`        | claude-bot | Bot 用户名     |
+| `CLAUDE_MAX_REVIEW_FILES`    | 20         | 最大审查文件数     |
 
 ## 开发
 
@@ -173,3 +176,4 @@ npm run build
 ## License
 
 MIT
+

@@ -66,12 +66,23 @@ export function createWebhookHandlers(): WebhookHandler {
       const project = payload.project;
       const commentBody = note || content;
 
+      logger.debug({
+        event: 'note_received',
+        noteable_type,
+        note: commentBody,
+        project_id: project.id,
+      }, 'Note received');
+
       if (!commentBody) {
         return;
       }
 
       // Check if this is a @claude command
       if (!isClaudeCommand(commentBody)) {
+        logger.debug({
+          event: 'not_claude_command',
+          commentBody,
+        }, 'Not a @claude command');
         return;
       }
 

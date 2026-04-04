@@ -7,19 +7,19 @@ describe('Webhook Verification', () => {
 
   describe('verifyGitLabWebhook', () => {
     it('should return true when no secret configured', () => {
-      const result = verifyGitLabWebhook('payload', 'signature', {});
+      const result = verifyGitLabWebhook('payload', null, null, {});
       expect(result).toBe(true);
     });
 
-    it('should verify token correctly', () => {
+    it('should verify gitlab token correctly', () => {
       const token = 'my-token';
-      const result = verifyGitLabWebhook('payload', token, { token });
+      const result = verifyGitLabWebhook('payload', null, token, { token });
       expect(result).toBe(true);
     });
 
-    it('should throw on invalid token', () => {
+    it('should throw on invalid gitlab token', () => {
       expect(() => {
-        verifyGitLabWebhook('payload', 'wrong-token', { token: 'correct-token' });
+        verifyGitLabWebhook('payload', null, 'wrong-token', { token: 'correct-token' });
       }).toThrow('Webhook signature verification failed');
     });
 
@@ -29,14 +29,20 @@ describe('Webhook Verification', () => {
         .update(payload, 'utf8')
         .digest('hex');
 
-      const result = verifyGitLabWebhook(payload, `sha256=${signature}`, { secret });
+      const result = verifyGitLabWebhook(payload, `sha256=${signature}`, null, { secret });
       expect(result).toBe(true);
     });
 
     it('should throw on invalid signature', () => {
       expect(() => {
-        verifyGitLabWebhook('payload', 'sha256=invalid', { secret });
+        verifyGitLabWebhook('payload', 'sha256=invalid', null, { secret });
       }).toThrow('Webhook signature verification failed');
+    });
+
+    it('should verify with both token and signature provided', () => {
+      const token = 'my-token';
+      const result = verifyGitLabWebhook('payload', null, token, { token });
+      expect(result).toBe(true);
     });
   });
 

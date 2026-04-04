@@ -9,8 +9,11 @@ export interface CreateNoteOptions {
 export class NoteAPI {
   constructor(private client: GitLabClient) {}
 
-  async create(projectId: number, noteableIid: number, body: string): Promise<Note> {
-    return this.client.post<Note>(`/projects/${projectId}/issues/${noteableIid}/notes`, { body });
+  async create(projectId: number, noteableIid: number, body: string, noteableType: 'Issue' | 'MergeRequest' = 'Issue'): Promise<Note> {
+    const path = noteableType === 'MergeRequest'
+      ? `/projects/${projectId}/merge_requests/${noteableIid}/notes`
+      : `/projects/${projectId}/issues/${noteableIid}/notes`;
+    return this.client.post<Note>(path, { body });
   }
 
   async update(projectId: number, noteId: number, body: string): Promise<Note> {

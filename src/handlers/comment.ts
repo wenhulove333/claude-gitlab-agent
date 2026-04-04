@@ -2,6 +2,7 @@ import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import type { NoteWebhookPayload } from '../webhook/types.js';
+import type { Note } from '../gitlab/types.js';
 import { getEnv } from '../config/index.js';
 
 // Pattern to match @claude command
@@ -33,7 +34,8 @@ export function extractInstruction(comment: string): string | null {
  */
 function buildPromptContext(
   payload: NoteWebhookPayload,
-  instruction: string
+  instruction: string,
+  history: Note[]
 ): string {
   const { noteable_type } = payload.object_attributes;
   const project = payload.project;
@@ -54,6 +56,18 @@ function buildPromptContext(
     context += `- 标题：${payload.merge_request.title}\n`;
   }
 
+  // Add conversation history
+  if (history.length > 0) {
+    context += `\n对话历史：\n`;
+    for (const note of history) {
+      // Skip the current @claude comment itself
+      if (note.body.includes('@claude') && note.author.username === user.username) {
+        continue;
+      }
+      context += `- ${note.author.username}: ${note.body}\n`;
+    }
+  }
+
   return context;
 }
 
@@ -62,9 +76,10 @@ function buildPromptContext(
  */
 function buildPrompt(
   payload: NoteWebhookPayload,
-  instruction: string
+  instruction: string,
+  history: Note[]
 ): string {
-  const context = buildPromptContext(payload, instruction);
+  const context = buildPromptContext(payload, instruction, history);
 
   const fullPrompt = `${context}
 
@@ -120,14 +135,30 @@ export async function handleClaudeComment(
     token: env.GITLAB_ACCESS_TOKEN,
   });
 
+  const noteableType = payload.object_attributes.noteable_type;
+  const noteableIid = noteableType === 'Issue'
+    ? payload.issue?.iid || 0
+    : payload.merge_request?.iid || 0;
+
+  // Fetch conversation history
+  let history: Note[] = [];
+  try {
+    if (noteableType === 'Issue') {
+      history = await gitlab.issues.getNotes(project.id, noteableIid, { sort: 'asc' });
+    } else {
+      history = await gitlab.mergeRequests.getNotes(project.id, noteableIid);
+    }
+    logDebug({ event: 'history_fetched', noteableType, count: history.length }, 'Fetched conversation history');
+  } catch (error) {
+    logWarn({ event: 'history_fetch_failed', error }, 'Failed to fetch conversation history');
+  }
+
   try {
     // Post initial response
-    await gitlab.notes.create(project.id, payload.object_attributes.noteable_type === 'Issue'
-      ? payload.issue?.iid || 0
-      : payload.merge_request?.iid || 0, '🤖 Claude 正在处理，请稍候...');
+    await gitlab.notes.create(project.id, noteableIid, '🤖 Claude 正在处理，请稍候...', noteableType);
 
     // Build prompt and call Claude CLI
-    const prompt = buildPrompt(payload, instruction);
+    const prompt = buildPrompt(payload, instruction, history);
     const cli = getClaudeCLI();
 
     logDebug({ event: 'claude_cli_call', prompt_length: prompt.length }, 'Calling Claude CLI');
@@ -145,17 +176,16 @@ ${response}`;
     // Post the response
     await gitlab.notes.create(
       project.id,
-      payload.object_attributes.noteable_type === 'Issue'
-        ? payload.issue?.iid || 0
-        : payload.merge_request?.iid || 0,
-      formattedResponse
+      noteableIid,
+      formattedResponse,
+      noteableType
     );
 
     logInfo(
       {
         event: 'claude_comment_response_sent',
         project_id: project.id,
-        noteable_type,
+        noteable_type: noteableType,
         response_length: response.length,
       },
       'Claude comment response sent successfully'
@@ -177,10 +207,9 @@ ${response}`;
 
       await gitlab.notes.create(
         project.id,
-        payload.object_attributes.noteable_type === 'Issue'
-          ? payload.issue?.iid || 0
-          : payload.merge_request?.iid || 0,
-        errorResponse
+        noteableIid,
+        errorResponse,
+        noteableType
       );
     } catch (postError) {
       logError(
