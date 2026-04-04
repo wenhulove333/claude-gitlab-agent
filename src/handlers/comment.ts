@@ -120,11 +120,14 @@ export async function handleClaudeComment(
     token: env.GITLAB_ACCESS_TOKEN,
   });
 
+  const noteableType = payload.object_attributes.noteable_type;
+  const noteableIid = noteableType === 'Issue'
+    ? payload.issue?.iid || 0
+    : payload.merge_request?.iid || 0;
+
   try {
     // Post initial response
-    await gitlab.notes.create(project.id, payload.object_attributes.noteable_type === 'Issue'
-      ? payload.issue?.iid || 0
-      : payload.merge_request?.iid || 0, '🤖 Claude 正在处理，请稍候...');
+    await gitlab.notes.create(project.id, noteableIid, '🤖 Claude 正在处理，请稍候...', noteableType);
 
     // Build prompt and call Claude CLI
     const prompt = buildPrompt(payload, instruction);
@@ -145,17 +148,16 @@ ${response}`;
     // Post the response
     await gitlab.notes.create(
       project.id,
-      payload.object_attributes.noteable_type === 'Issue'
-        ? payload.issue?.iid || 0
-        : payload.merge_request?.iid || 0,
-      formattedResponse
+      noteableIid,
+      formattedResponse,
+      noteableType
     );
 
     logInfo(
       {
         event: 'claude_comment_response_sent',
         project_id: project.id,
-        noteable_type,
+        noteable_type: noteableType,
         response_length: response.length,
       },
       'Claude comment response sent successfully'
@@ -177,10 +179,9 @@ ${response}`;
 
       await gitlab.notes.create(
         project.id,
-        payload.object_attributes.noteable_type === 'Issue'
-          ? payload.issue?.iid || 0
-          : payload.merge_request?.iid || 0,
-        errorResponse
+        noteableIid,
+        errorResponse,
+        noteableType
       );
     } catch (postError) {
       logError(
