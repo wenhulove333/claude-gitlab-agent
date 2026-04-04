@@ -84,9 +84,135 @@ function buildPrompt(
 
   const fullPrompt = `${context}
 
-请回答用户的问题。`;
+请回答用户的问题。
+
+## 重要提醒
+如果你在回答过程中对项目代码做了任何修改（包括创建、编辑、删除文件），请在回答的最后输出以下格式的 JSON（只输出 JSON，不要有其他内容）：
+{
+  "code_changed": true,
+  "summary": "本次变更的简要说明",
+  "changed_files": ["file1.ts", "file2.ts"],
+  "commit_message": "提交信息"
+}
+
+如果没有任何代码变更，则不需要输出 JSON。`;
 
   return fullPrompt;
+}
+
+/**
+ * Patterns that indicate the user wants code changes
+ */
+const CODE_CHANGE_PATTERNS = [
+  /修改|改动|改变|调整/,
+  /修复|解决|bug/,
+  /添加|新增|实现|功能/,
+  /重构|优化|改进/,
+  /帮我|帮我做|帮我改/,
+  /写.*代码|写个|写一下/,
+  /代码.*修改|代码.*改动/,
+  /根据.*改|按照.*改/,
+  /implement|fix|add|change|modify|update|rewrite|refactor/,
+  /write.*code|create.*file|edit.*file/,
+];
+
+/**
+ * Check if the instruction is asking for code changes
+ */
+function isCodeChangeRequest(instruction: string): boolean {
+  return CODE_CHANGE_PATTERNS.some((pattern) => pattern.test(instruction));
+}
+
+/**
+ * Build prompt for code change requests - Claude only writes files, no git commands
+ */
+function buildCodeChangePrompt(
+  payload: NoteWebhookPayload,
+  instruction: string,
+  history: Note[]
+): string {
+  const { noteable_type } = payload.object_attributes;
+  const project = payload.project;
+
+  let projectPath = project.path_with_namespace;
+  let defaultBranch = project.default_branch;
+  let issueOrMrInfo = '';
+
+  if (noteable_type === 'Issue' && payload.issue) {
+    defaultBranch = project.default_branch || 'main';
+    issueOrMrInfo = `Issue 编号：#${payload.issue.iid}\n`;
+  } else if (noteable_type === 'MergeRequest' && payload.merge_request) {
+    defaultBranch = project.default_branch || 'main';
+    issueOrMrInfo = `MR 编号：!${payload.merge_request.iid}\n`;
+  }
+
+  const conversationHistory = history.length > 0
+    ? history.map((n) => `- ${n.author.username}: ${n.body}`).join('\n')
+    : '(无)';
+
+  return `你是一个资深开发者。你的任务是：根据用户需求实现代码变更。
+
+## 项目信息
+- 项目路径：${projectPath}
+- 默认分支：${defaultBranch}
+${issueOrMrInfo}
+
+## 用户需求
+${instruction}
+
+## 对话历史
+${conversationHistory}
+
+## 重要约束
+1. **只使用 Edit/Write 工具编写代码，不要执行任何 git 命令**
+2. 不要修改 .gitlab-ci.yml、Dockerfile、config/ 等关键文件（除非需求明确要求）
+3. 确保代码变更与需求描述一致
+4. 如果有测试，运行测试确保通过
+
+## 工作目录
+当前工作目录是项目仓库的根目录。仓库已经在默认分支上，干净状态。
+
+## 输出要求
+完成代码编写后，请输出以下格式的 JSON（只输出 JSON，不要有其他内容）：
+{
+  "summary": "本次变更的简要说明",
+  "changed_files": ["file1.ts", "file2.ts"],
+  "commit_message": "提交信息（格式：<动词> <内容>）"
+}
+
+例如：
+{
+  "summary": "修复了登录按钮的空指针异常",
+  "changed_files": ["src/components/LoginButton.tsx", "src/utils/auth.ts"],
+  "commit_message": "Fix login button null pointer"
+}`;
+}
+
+/**
+ * Parse code change response JSON
+ */
+function parseCodeChangeResponse(response: string): {
+  summary: string;
+  changedFiles: string[];
+  commitMessage: string;
+} | null {
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*?\}/);
+    if (!jsonMatch) return null;
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed.summary || !parsed.changed_files || !parsed.commit_message) {
+      return null;
+    }
+
+    return {
+      summary: parsed.summary,
+      changedFiles: parsed.changed_files,
+      commitMessage: parsed.commit_message,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export interface HandleCommentOptions {
@@ -217,41 +343,137 @@ export async function handleClaudeComment(
     logWarn({ event: 'history_fetch_failed', error }, 'Failed to fetch conversation history');
   }
 
+  // Check if this is a code change request
+  const isCodeChange = isCodeChangeRequest(instruction);
+  logInfo(
+    { event: 'request_type_detected', isCodeChange, instruction: instruction.slice(0, 50) },
+    `Request type: ${isCodeChange ? 'code change' : 'Q&A'}`
+  );
+
   try {
-    // Build prompt and call Claude CLI
-    const prompt = buildPrompt(payload, instruction, history);
+    // Build prompt based on request type
+    const prompt = isCodeChange
+      ? buildCodeChangePrompt(payload, instruction, history)
+      : buildPrompt(payload, instruction, history);
+
     const cli = getClaudeCLI();
 
-    logDebug({ event: 'claude_cli_call', prompt_length: prompt.length }, 'Calling Claude CLI');
+    // Use longer timeout for code generation
+    const timeout = isCodeChange ? 180 : 60;
+
+    logDebug({ event: 'claude_cli_call', prompt_length: prompt.length, isCodeChange }, 'Calling Claude CLI');
 
     const response = await cli.prompt(prompt, {
       systemPrompt,
-      timeout: 60, // 60 seconds for Q&A
+      timeout,
       workingDirectory,
     });
 
-    // Format response
-    const formattedResponse = `🤖 Claude 回复：
+    // Handle code change response
+    if (isCodeChange) {
+      const parsed = parseCodeChangeResponse(response);
+      if (!parsed) {
+        // If can't parse JSON, just post the raw response
+        const formattedResponse = `🤖 Claude 回复：
 
 ${response}`;
+        await gitlab.notes.create(
+          project.id,
+          noteableIid,
+          formattedResponse,
+          noteableType
+        );
+        logInfo(
+          { event: 'claude_code_response_raw', response_length: response.length },
+          'Code change response posted as raw text'
+        );
+        return;
+      }
 
-    // Post the response
-    await gitlab.notes.create(
-      project.id,
-      noteableIid,
-      formattedResponse,
-      noteableType
-    );
+      // Post the summary
+      const summaryResponse = `🤖 Claude 已完成代码编写！
 
-    logInfo(
-      {
-        event: 'claude_comment_response_sent',
-        project_id: project.id,
-        noteable_type: noteableType,
-        response_length: response.length,
-      },
-      'Claude comment response sent successfully'
-    );
+**变更说明**：${parsed.summary}
+
+**变更文件**：
+${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
+
+**提交信息**：${parsed.commitMessage}
+
+正在提交代码...`;
+
+      await gitlab.notes.create(
+        project.id,
+        noteableIid,
+        summaryResponse,
+        noteableType
+      );
+
+      logInfo(
+        {
+          event: 'claude_code_completed',
+          changedFiles: parsed.changedFiles,
+          commitMessage: parsed.commitMessage,
+        },
+        'Code change completed, summary posted'
+      );
+    } else {
+      // Handle Q&A response - check if Claude made code changes
+      // First, extract any JSON from the response
+      const jsonMatch = response.match(/\{[\s\S]*?\}/);
+      let responseText = response;
+      let codeChangeInfo: { summary: string; changedFiles: string[]; commitMessage: string } | null = null;
+
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.code_changed === true && parsed.commit_message) {
+            codeChangeInfo = {
+              summary: parsed.summary || '代码变更',
+              changedFiles: parsed.changed_files || [],
+              commitMessage: parsed.commit_message,
+            };
+            // Remove the JSON from the response text
+            responseText = response.replace(jsonMatch[0], '').trim();
+          }
+        } catch {
+          // Not valid JSON, treat as regular response
+        }
+      }
+
+      // Post the response
+      const formattedResponse = `🤖 Claude 回复：
+
+${responseText}${codeChangeInfo ? `\n\n**代码变更**：${codeChangeInfo.summary}\n\n**变更文件**：\n${codeChangeInfo.changedFiles.map((f) => `- ${f}`).join('\n')}\n\n**提交信息**：${codeChangeInfo.commitMessage}` : ''}`;
+
+      await gitlab.notes.create(
+        project.id,
+        noteableIid,
+        formattedResponse,
+        noteableType
+      );
+
+      if (codeChangeInfo) {
+        logInfo(
+          {
+            event: 'claude_qa_with_code_change',
+            summary: codeChangeInfo.summary,
+            changedFiles: codeChangeInfo.changedFiles,
+          },
+          'Q&A response with code changes detected'
+        );
+      } else {
+        logInfo(
+          {
+            event: 'claude_comment_response_sent',
+            project_id: project.id,
+            noteable_type: noteableType,
+            response_length: response.length,
+          },
+          'Claude comment response sent successfully'
+        );
+      }
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logError(
