@@ -155,60 +155,58 @@ const CONSTRAINTS = {
 - 只能使用 Edit/Write 工具修改代码
 - 提交操作由系统自动完成，你只需专注完成任务`,
 
-  /** JSON 输出约束（通用） */
-  JSON_OUTPUT: `**输出要求**：在回答最后必须输出以下 JSON 格式（无论是否有代码变更）：
-{
-  "code_changed": true或false,
-  "summary": "本次变更的简要说明"
-}`,
+  /** Issue 评论输出约束 */
+  RESULT_OUTPUT_ISSUE: `**输出要求**：回答后，**必须**输出以下结构化信息（使用此精确格式，以便程序解析）：
 
-  /** JSON 输出约束（包含文件列表） */
-  JSON_OUTPUT_WITH_FILES: `**输出要求**：在回答最后必须输出以下 JSON 格式（无论是否有代码变更）：
-{
-  "code_changed": true或false,
-  "summary": "本次变更的简要说明",
-  "changed_files": ["file1.ts", "file2.ts"],
-  "commit_message": "提交信息"
-}`,
+[RESULT]
+code_changed: true | false
+summary: "本次变更的简要说明"
+changed_files: ["file1.ts", "file2.ts"]
+[/RESULT]
 
-  /** JSON 输出约束（Issue 场景） */
-  JSON_OUTPUT_ISSUE: `**输出要求**：在回答最后必须输出以下 JSON 格式：
-{
-  "code_changed": true或false,
-  "summary": "本次变更的简要说明",
-  "changed_files": ["file1.ts", "file2.ts"],
-  "commit_message": "提交信息"
-}`,
+然后输出 Markdown 格式的回答内容。`,
 
-  /** 创建 MR 输出约束 */
-  JSON_OUTPUT_CREATE_MR: `**输出要求**：完成后请输出以下 JSON 格式：
-{
-  "summary": "变更说明（简述本次代码变更的内容）",
-  "commit_message": "提交信息（简洁的提交描述）"
-}`,
+  /** MR 评论输出约束 */
+  RESULT_OUTPUT_MR: `**输出要求**：回答后，**必须**输出以下结构化信息（使用此精确格式，以便程序解析）：
 
-  /** 代码审查输出约束 */
-  REVIEW_OUTPUT: `**输出要求**：请按以下 JSON 格式输出审查结果（只输出 JSON，不要有其他内容）：
-{
-  "blocking": [
-    {"file": "文件路径", "line": 行号, "issue": "问题描述"}
-  ],
-  "suggestions": [
-    {"file": "文件路径", "line": 行号, "issue": "建议描述"}
-  ],
-  "optimizations": [
-    {"file": "文件路径", "line": 行号, "issue": "优化建议"}
-  ],
-  "summary": "总体评价"
-}`,
+[RESULT]
+code_changed: true | false
+summary: "本次变更的简要说明"
+changed_files: ["file1.ts", "file2.ts"]
+commit_message: "提交信息"
+[/RESULT]
 
-  /** Markdown 输出约束 */
-  MARKDOWN_OUTPUT: `**输出要求**：请直接输出 Markdown 格式的设计文档，不包含 JSON。包含以下部分：
+然后输出 Markdown 格式的回答内容。`,
+
+  /** Issue 分析输出约束 */
+  ANALYSIS_OUTPUT: `**输出要求**：**必须**在设计文档之前输出以下结构化信息（使用此精确格式，以便程序解析）：
+
+[ANALYSIS]
+category: new_feature | improvement | bug_fix | not_related | unknown
+summary: 一句话总结（不超过50字）
+[/ANALYSIS]
+
+然后输出 Markdown 格式的设计文档，包含：
 - 分类（新功能/优化改进/问题修复/与项目无关）
 - 一句话总结
 - 背景说明
 - 详细设计方案
 - 验收标准`,
+
+  /** 代码审查输出约束（纯 Markdown） */
+  REVIEW_OUTPUT: `**输出要求**：请直接输出 Markdown 格式的审查结果，包含以下部分：
+- 🔴 阻塞问题（必须修复）：列出所有 blocking 问题
+- 🟡 建议改进：列出所有建议改进项
+- 🟢 优化建议（可选）：列出所有优化建议
+- 总体评价：对代码变更的整体评价`,
+
+  /** 创建 MR 输出约束 */
+  RESULT_OUTPUT_CREATE_MR: `**输出要求**：完成后，**必须**输出以下结构化信息（使用此精确格式，以便程序解析）：
+
+[RESULT]
+summary: "变更说明（简述本次代码变更的内容）"
+commit_message: "提交信息（简洁的提交描述）"
+[/RESULT]`,
 
   /** 创建 MR 约束 */
   CREATE_MR_CONSTRAINTS: `**重要约束**：
@@ -322,17 +320,16 @@ export function buildPrompt(options: BuildPromptOptions): string {
   switch (scenario) {
     case 'comment-issue':
       prompt += CONSTRAINTS.CODE_CHANGE + '\n\n';
-      prompt += CONSTRAINTS.JSON_OUTPUT_ISSUE + '\n';
+      prompt += CONSTRAINTS.RESULT_OUTPUT_ISSUE + '\n';
       break;
 
     case 'comment-mr':
       prompt += CONSTRAINTS.CODE_CHANGE + '\n\n';
-      prompt += CONSTRAINTS.JSON_OUTPUT_WITH_FILES + '\n';
-      prompt += '- 如果修改了代码，代码将被自动提交到 MR 的源分支\n';
+      prompt += CONSTRAINTS.RESULT_OUTPUT_MR + '\n';
       break;
 
     case 'analyze-issue':
-      prompt += CONSTRAINTS.MARKDOWN_OUTPUT + '\n';
+      prompt += CONSTRAINTS.ANALYSIS_OUTPUT + '\n';
       break;
 
     case 'review':
@@ -341,7 +338,7 @@ export function buildPrompt(options: BuildPromptOptions): string {
 
     case 'create-mr':
       prompt += CONSTRAINTS.CREATE_MR_CONSTRAINTS + '\n\n';
-      prompt += CONSTRAINTS.JSON_OUTPUT_CREATE_MR + '\n';
+      prompt += CONSTRAINTS.RESULT_OUTPUT_CREATE_MR + '\n';
       break;
   }
 
@@ -466,8 +463,17 @@ export function parseReviewResponse(response: string): ReviewResponse | null {
  * 解析创建 MR 响应
  */
 export function parseCreateMRResponse(response: string): { summary: string; commitMessage: string } | null {
-  const jsonStr = extractJSON(response);
+  // 尝试解析 [RESULT] 结构化块
+  const result = parseResult(response);
+  if (result) {
+    return {
+      summary: result.summary || '',
+      commitMessage: result.commit_message || '',
+    };
+  }
 
+  // 回退到 JSON 格式
+  const jsonStr = extractJSON(response);
   if (!jsonStr) {
     return null;
   }
@@ -493,29 +499,24 @@ export type IssueCategory = 'new_feature' | 'improvement' | 'bug_fix' | 'not_rel
  * Claude 会输出 Markdown 格式，分类在第一部分
  */
 export function parseIssueCategory(response: string): IssueCategory {
-  // 匹配常见的分类格式
+  // 匹配常见的分类格式（支持 Markdown 粗体）
   const patterns = [
-    /分类[：:]\s*新功能/i,
-    /category[：:]\s*new feature/i,
-    /分类[：:]\s*优化改进/i,
-    /category[：:]\s*improvement/i,
-    /分类[：:]\s*问题修复/i,
-    /category[：:]\s*bug fix/i,
-    /分类[：:]\s*与项目无关/i,
-    /category[：:]\s*not related/i,
+    // 新功能
+    [/分类[：:]\s*新功能/i, /category[：:]\s*new feature/i, /\*\*分类\*\*[：:]\s*新功能/i, /#+\s*分类[：:]\s*新功能/i],
+    // 优化改进
+    [/分类[：:]\s*优化改进/i, /category[：:]\s*improvement/i, /\*\*分类\*\*[：:]\s*优化改进/i, /#+\s*分类[：:]\s*优化改进/i],
+    // 问题修复
+    [/分类[：:]\s*问题修复/i, /category[：:]\s*bug fix/i, /\*\*分类\*\*[：:]\s*问题修复/i, /#+\s*分类[：:]\s*问题修复/i],
+    // 与项目无关
+    [/分类[：:]\s*与项目无关/i, /category[：:]\s*not related/i, /\*\*分类\*\*[：:]\s*与项目无关/i, /#+\s*分类[：:]\s*与项目无关/i],
   ];
 
-  if (patterns[0].test(response) || patterns[1].test(response)) {
-    return 'new_feature';
-  }
-  if (patterns[2].test(response) || patterns[3].test(response)) {
-    return 'improvement';
-  }
-  if (patterns[4].test(response) || patterns[5].test(response)) {
-    return 'bug_fix';
-  }
-  if (patterns[6].test(response) || patterns[7].test(response)) {
-    return 'not_related';
+  for (let i = 0; i < patterns.length; i++) {
+    for (const pattern of patterns[i]) {
+      if (pattern.test(response)) {
+        return ['new_feature', 'improvement', 'bug_fix', 'not_related'][i] as IssueCategory;
+      }
+    }
   }
 
   return 'unknown';
@@ -581,14 +582,125 @@ export function buildAnalyzeIssuePrompt(
   issueTitle: string,
   issueDescription: string
 ): string {
-  return buildPrompt({
-    role: 'analyst',
-    scenario: 'analyze-issue',
-    context: {
-      projectPath,
-      issue: { iid: issueIid, title: issueTitle, description: issueDescription },
-    },
-  });
+  return `你是一个资深产品经理和架构师，擅长分析需求并生成详细的设计文档。
+
+## 上下文信息
+- 项目：${projectPath}
+- Issue 编号：#${issueIid}
+
+## Issue 信息
+- 标题：${issueTitle}
+- 描述：${issueDescription || '(无)'}
+
+## 任务
+分析 Issue 内容，生成详细的设计文档。
+首先通读代码库，了解项目结构。
+分析 Issue 与项目的关联性。
+如果与项目相关，生成详细的设计文档。
+
+## 输出要求
+**必须**在设计文档之前输出以下结构化信息（使用此精确格式，以便程序解析）：
+
+[ANALYSIS]
+category: new_feature | improvement | bug_fix | not_related | unknown
+summary: 一句话总结（不超过50字）
+[/ANALYSIS]
+
+然后输出 Markdown 格式的设计文档，包含：
+- 分类（新功能/优化改进/问题修复/与项目无关）
+- 一句话总结
+- 背景说明
+- 详细设计方案
+- 验收标准`;
+}
+
+/**
+ * 解析结构化的 Issue 分析结果
+ */
+export interface StructuredIssueAnalysis {
+  category: IssueCategory;
+  summary: string;
+}
+
+export function parseStructuredIssueAnalysis(response: string): StructuredIssueAnalysis | null {
+  const match = response.match(/\[ANALYSIS\][\s\S]*?\[\/ANALYSIS\]/i);
+  if (!match) {
+    return null;
+  }
+
+  const block = match[0];
+
+  // 解析 category
+  let category: IssueCategory = 'unknown';
+  const categoryMatch = block.match(/category:\s*(new_feature|improvement|bug_fix|not_related|unknown)/i);
+  if (categoryMatch) {
+    category = categoryMatch[1] as IssueCategory;
+  }
+
+  // 解析 summary
+  let summary = '';
+  const summaryMatch = block.match(/summary:\s*(.+)/i);
+  if (summaryMatch) {
+    summary = summaryMatch[1].trim();
+  }
+
+  return { category, summary };
+}
+
+/**
+ * 评论/创建MR 结果解析
+ */
+export interface CommentResult {
+  code_changed: boolean;
+  summary: string;
+  changed_files?: string[];
+  commit_message?: string;
+}
+
+/**
+ * 解析 [RESULT] 结构化块
+ */
+export function parseResult(response: string): CommentResult | null {
+  const match = response.match(/\[RESULT\][\s\S]*?\[\/RESULT\]/i);
+  if (!match) {
+    return null;
+  }
+
+  const block = match[0];
+
+  // 解析 code_changed
+  let code_changed = false;
+  const codeChangedMatch = block.match(/code_changed:\s*(true|false)/i);
+  if (codeChangedMatch) {
+    code_changed = codeChangedMatch[1].toLowerCase() === 'true';
+  }
+
+  // 解析 summary
+  let summary = '';
+  const summaryMatch = block.match(/summary:\s*(.+)/i);
+  if (summaryMatch) {
+    summary = summaryMatch[1].trim().replace(/^"|"$/g, '');
+  }
+
+  // 解析 changed_files（可选）
+  let changed_files: string[] | undefined;
+  const changedFilesMatch = block.match(/changed_files:\s*(\[.*?\])/i);
+  if (changedFilesMatch) {
+    try {
+      changed_files = JSON.parse(changedFilesMatch[1]);
+    } catch {
+      // 解析失败，忽略
+    }
+  }
+
+  // 解析 commit_message（可选）
+  let commit_message: string | undefined;
+  const commitMessageMatch = block.match(/commit_message:\s*(.+)/i);
+  if (commitMessageMatch) {
+    commit_message = commitMessageMatch[1].trim().replace(/^"|"$/g, '');
+  }
+
+  return { code_changed, summary, changed_files, commit_message };
 }
 
 /**

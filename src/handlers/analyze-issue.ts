@@ -1,8 +1,8 @@
-import { logInfo, logError } from '../utils/logger.js';
+import { logInfo, logError, logDebug } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
-import { buildAnalyzeIssuePrompt, parseIssueCategory } from '../claude/prompts/index.js';
+import { buildAnalyzeIssuePrompt, parseIssueCategory, parseStructuredIssueAnalysis } from '../claude/prompts/index.js';
 import type { IssueWebhookPayload } from '../webhook/types.js';
 import { getEnv } from '../config/index.js';
 
@@ -72,11 +72,25 @@ export async function analyzeIssue(
       workingDirectory,
     });
 
-    // 解析 category
-    const category = parseIssueCategory(response);
+    // 尝试解析结构化数据
+    let category: string;
+    let summary: string;
 
-    // 直接将 Claude 的回复作为设计文档发布
-    const designDoc = `## 📋 Issue 分析报告\n\n${response.trim()}`;
+    const structured = parseStructuredIssueAnalysis(response);
+    if (structured) {
+      category = structured.category;
+      summary = structured.summary;
+      logDebug({ event: 'issue_analysis_parsed', issue_iid: iid, category, summary, hasAnalysis: true }, 'Parsed structured issue analysis');
+    } else {
+      // 回退到正则解析
+      category = parseIssueCategory(response);
+      summary = '';
+      logDebug({ event: 'issue_analysis_parsed', issue_iid: iid, category, responsePreview: response.slice(0, 200), hasAnalysis: false }, 'Failed to parse structured analysis, using fallback');
+    }
+
+    // 移除 [ANALYSIS] 块，只保留设计文档部分用于发布
+    const designDocContent = response.replace(/\[ANALYSIS\][\s\S]*?\[\/ANALYSIS\]\s*/i, '');
+    const designDoc = `## 📋 Issue 分析报告\n\n${designDocContent.trim()}`;
 
     await gitlab.issues.createNote(project.id, iid, designDoc);
 

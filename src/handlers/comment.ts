@@ -2,7 +2,7 @@ import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
-import { buildPrompt, validateResponse, generateRetryPrompt } from '../claude/prompts/index.js';
+import { buildPrompt, validateResponse, generateRetryPrompt, parseResult } from '../claude/prompts/index.js';
 import type { NoteWebhookPayload, IssueWebhookPayload } from '../webhook/types.js';
 import type { Note } from '../gitlab/types.js';
 import { getEnv } from '../config/index.js';
@@ -330,23 +330,19 @@ export async function handleClaudeComment(
         systemPrompt,
       });
 
+      // 尝试解析 [RESULT] 结构化块
+      const result = parseResult(response);
+      const responseText = result
+        ? response.replace(/\[RESULT\][\s\S]*?\[\/RESULT\]\s*/i, '').trim()
+        : response;
+      const codeChanged = result?.code_changed ?? false;
+
       // Check for uncommitted changes and commit/push
       const status = await git.status();
       const hasChanges = !status.isClean();
 
-      if (hasChanges) {
-        let commitMessage = 'Update code';
-        const jsonMatch = response.match(/\{[\s\S]*?\}/);
-        if (jsonMatch) {
-          try {
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (parsed.commit_message) {
-              commitMessage = parsed.commit_message;
-            }
-          } catch {
-            // Not valid JSON
-          }
-        }
+      if (hasChanges || codeChanged) {
+        const commitMessage = result?.commit_message || 'Update code';
 
         logInfo(
           { event: 'git_commit_push', branch: sourceBranch, commitMessage },
@@ -363,21 +359,17 @@ export async function handleClaudeComment(
       }
 
       // Post response
-      const jsonMatch = response.match(/\{[\s\S]*?\}/);
-      const responseText = jsonMatch ? response.replace(jsonMatch[0], '').trim() : response;
-      const parsed = jsonMatch ? (() => { try { return JSON.parse(jsonMatch[0]); } catch { return null; } })() : null;
-
       let postedResponse = '';
-      if (parsed?.code_changed) {
+      if (codeChanged) {
         postedResponse = `🤖 ${botName} 回复：
 
 ${responseText || '代码已修改并提交。'}
 
 ---
 
-**代码变更**：${parsed.summary || '代码变更'}
+**代码变更**：${result?.summary || '代码变更'}
 
-**提交信息**：${parsed.commit_message || 'Update code'}
+**提交信息**：${result?.commit_message || 'Update code'}
 
 **分支**：${sourceBranch}`;
       } else {
@@ -390,8 +382,8 @@ ${responseContent}`;
       await gitlab.notes.create(project.id, noteableIid, postedResponse, noteableType);
 
       logInfo(
-        { event: 'claude_mr_completed', codeChanged: hasChanges },
-        `MR comment processed, code_changed=${hasChanges}`
+        { event: 'claude_mr_completed', codeChanged },
+        `MR comment processed, code_changed=${codeChanged}`
       );
       return;
     }
@@ -410,28 +402,24 @@ ${responseContent}`;
     const status = await git.status();
     const hasChanges = !status.isClean();
 
-    const jsonMatch = response.match(/\{[\s\S]*?\}/);
+    // 尝试解析 [RESULT] 结构化块
+    const result = parseResult(response);
     let responseText = response;
-    let codeChangeInfo: { summary: string; changedFiles: string[]; commitMessage: string } | null = null;
-
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.code_changed === true) {
-          codeChangeInfo = {
-            summary: parsed.summary || '代码变更',
-            changedFiles: parsed.changed_files || [],
-            commitMessage: parsed.commit_message || 'Update code',
-          };
-          responseText = response.replace(jsonMatch[0], '').trim();
-        }
-      } catch {
-        // Not valid JSON
-      }
+    if (result) {
+      // 移除 [RESULT] 块，只保留 Markdown 内容
+      responseText = response.replace(/\[RESULT\][\s\S]*?\[\/RESULT\]\s*/i, '').trim();
     }
 
-    // If there are uncommitted changes, create MR
-    if (hasChanges) {
+    // 如果有结构化的 code_changed 信息，优先使用
+    const codeChanged = result?.code_changed ?? hasChanges;
+    const codeChangeInfo = result ? {
+      summary: result.summary || '代码变更',
+      changedFiles: result.changed_files || [],
+      commitMessage: result.commit_message || 'Update code',
+    } : null;
+
+    // If there are code changes, create MR
+    if (codeChanged) {
       logInfo({ event: 'code_changes_detected' }, 'Code changes detected, will create MR');
 
       const { handleCreateMR } = await import('./create-mr.js');
