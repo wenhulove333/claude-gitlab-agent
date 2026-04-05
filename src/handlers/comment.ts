@@ -2,9 +2,10 @@ import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
-import type { NoteWebhookPayload } from '../webhook/types.js';
+import type { NoteWebhookPayload, IssueWebhookPayload } from '../webhook/types.js';
 import type { Note } from '../gitlab/types.js';
 import { getEnv } from '../config/index.js';
+import simpleGit from 'simple-git';
 
 // Pattern to match @claude command
 const CLAUDE_COMMAND_PATTERN = /^@claude\s*/i;
@@ -75,7 +76,7 @@ function buildPromptContext(
 /**
  * Build the full prompt for Claude CLI
  */
-function buildPrompt(
+function buildIssuePrompt(
   payload: NoteWebhookPayload,
   instruction: string,
   history: Note[]
@@ -86,133 +87,73 @@ function buildPrompt(
 
 请回答用户的问题。
 
-## 重要提醒
-如果你在回答过程中对项目代码做了任何修改（包括创建、编辑、删除文件），请在回答的最后输出以下格式的 JSON（只输出 JSON，不要有其他内容）：
+## 关于代码变更
+**重要约束**：如果你需要修改代码，只能使用 Edit/Write 工具，禁止执行任何 git 命令。
+
+如果你在回答过程中对项目代码做了修改（包括创建、编辑、删除文件），请在回答的最后输出以下格式的 JSON（只输出 JSON，不要有其他内容）：
 {
   "code_changed": true,
   "summary": "本次变更的简要说明",
   "changed_files": ["file1.ts", "file2.ts"],
-  "commit_message": "提交信息"
+  "commit_message": "提交信息",
+  "create_mr": true或false  // 如果需要创建 MR 则为 true
 }
 
-如果没有任何代码变更，则不需要输出 JSON。`;
+**判断标准**：
+- 如果只是回答问题、解释代码、讨论方案 → 不输出 JSON
+- 如果对代码做了修改，且需要创建 MR → create_mr: true
+- 如果对代码做了修改，只需提交到当前分支 → create_mr: false
+- 提交操作由系统自动完成`;
 
   return fullPrompt;
 }
 
 /**
- * Patterns that indicate the user wants code changes
+ * Build prompt for MR - Claude decides whether to make code changes
+ * If code is changed, it commits to the MR's source branch
  */
-const CODE_CHANGE_PATTERNS = [
-  /修改|改动|改变|调整/,
-  /修复|解决|bug/,
-  /添加|新增|实现|功能/,
-  /重构|优化|改进/,
-  /帮我|帮我做|帮我改/,
-  /写.*代码|写个|写一下/,
-  /代码.*修改|代码.*改动/,
-  /根据.*改|按照.*改/,
-  /implement|fix|add|change|modify|update|rewrite|refactor/,
-  /write.*code|create.*file|edit.*file/,
-];
-
-/**
- * Check if the instruction is asking for code changes
- */
-function isCodeChangeRequest(instruction: string): boolean {
-  return CODE_CHANGE_PATTERNS.some((pattern) => pattern.test(instruction));
-}
-
-/**
- * Build prompt for code change requests - Claude only writes files, no git commands
- */
-function buildCodeChangePrompt(
-  payload: NoteWebhookPayload,
+function buildMRPrompt(
   instruction: string,
-  history: Note[]
+  history: Note[],
+  mrTitle: string,
+  sourceBranch: string
 ): string {
-  const { noteable_type } = payload.object_attributes;
-  const project = payload.project;
-
-  let projectPath = project.path_with_namespace;
-  let defaultBranch = project.default_branch;
-  let issueOrMrInfo = '';
-
-  if (noteable_type === 'Issue' && payload.issue) {
-    defaultBranch = project.default_branch || 'main';
-    issueOrMrInfo = `Issue 编号：#${payload.issue.iid}\n`;
-  } else if (noteable_type === 'MergeRequest' && payload.merge_request) {
-    defaultBranch = project.default_branch || 'main';
-    issueOrMrInfo = `MR 编号：!${payload.merge_request.iid}\n`;
-  }
-
   const conversationHistory = history.length > 0
     ? history.map((n) => `- ${n.author.username}: ${n.body}`).join('\n')
     : '(无)';
 
-  return `你是一个资深开发者。你的任务是：根据用户需求实现代码变更。
+  return `你是一个资深开发者。请回答用户的问题，并在需要时修改代码。
 
-## 项目信息
-- 项目路径：${projectPath}
-- 默认分支：${defaultBranch}
-${issueOrMrInfo}
+## MR 信息
+- MR 标题：${mrTitle}
+- 源分支：${sourceBranch}
 
-## 用户需求
+## 用户问题
 ${instruction}
 
 ## 对话历史
 ${conversationHistory}
 
-## 重要约束
-1. **只使用 Edit/Write 工具编写代码，不要执行任何 git 命令**
-2. 不要修改 .gitlab-ci.yml、Dockerfile、config/ 等关键文件（除非需求明确要求）
-3. 确保代码变更与需求描述一致
-4. 如果有测试，运行测试确保通过
+## 关于代码变更
+**重要约束**：如果你需要修改代码，只能使用 Edit/Write 工具，禁止执行任何 git 命令。
 
-## 工作目录
-当前工作目录是项目仓库的根目录。仓库已经在默认分支上，干净状态。
-
-## 输出要求
-完成代码编写后，请输出以下格式的 JSON（只输出 JSON，不要有其他内容）：
+如果你在回答过程中对项目代码做了修改（包括创建、编辑、删除文件），请在回答的最后输出以下格式的 JSON（只输出 JSON，不要有其他内容）：
 {
+  "code_changed": true,
   "summary": "本次变更的简要说明",
-  "changed_files": ["file1.ts", "file2.ts"],
-  "commit_message": "提交信息（格式：<动词> <内容>）"
+  "commit_message": "提交信息（简洁描述变更内容）"
 }
 
-例如：
-{
-  "summary": "修复了登录按钮的空指针异常",
-  "changed_files": ["src/components/LoginButton.tsx", "src/utils/auth.ts"],
-  "commit_message": "Fix login button null pointer"
-}`;
-}
+**判断标准**：
+- 如果只是回答问题、解释代码、讨论方案 → 不输出 JSON
+- 如果对代码做了修改 → 输出上述 JSON
 
-/**
- * Parse code change response JSON
- */
-function parseCodeChangeResponse(response: string): {
-  summary: string;
-  changedFiles: string[];
-  commitMessage: string;
-} | null {
-  try {
-    const jsonMatch = response.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) return null;
+## 提交说明
+- 如果输出了 JSON，代码将被自动提交到 MR 的源分支 "${sourceBranch}"
+- 请勿在代码中使用 git 命令，提交操作由系统自动完成
+- 提交信息应简洁清晰
 
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (!parsed.summary || !parsed.changed_files || !parsed.commit_message) {
-      return null;
-    }
-
-    return {
-      summary: parsed.summary,
-      changedFiles: parsed.changed_files,
-      commitMessage: parsed.commit_message,
-    };
-  } catch {
-    return null;
-  }
+请回答用户的问题。`;
 }
 
 export interface HandleCommentOptions {
@@ -343,136 +284,206 @@ export async function handleClaudeComment(
     logWarn({ event: 'history_fetch_failed', error }, 'Failed to fetch conversation history');
   }
 
-  // Check if this is a code change request
-  const isCodeChange = isCodeChangeRequest(instruction);
-  logInfo(
-    { event: 'request_type_detected', isCodeChange, instruction: instruction.slice(0, 50) },
-    `Request type: ${isCodeChange ? 'code change' : 'Q&A'}`
-  );
-
   try {
-    // Build prompt based on request type
-    const prompt = isCodeChange
-      ? buildCodeChangePrompt(payload, instruction, history)
-      : buildPrompt(payload, instruction, history);
-
     const cli = getClaudeCLI();
+    let response: string;
 
-    // Use longer timeout for code generation
-    const timeout = isCodeChange ? 180 : 60;
+    // MR: Claude decides autonomously, auto-commits if code changed
+    if (noteableType === 'MergeRequest') {
+      const mr = await gitlab.mergeRequests.get(project.id, noteableIid);
+      const sourceBranch = mr.source_branch;
 
-    logDebug({ event: 'claude_cli_call', prompt_length: prompt.length, isCodeChange }, 'Calling Claude CLI');
+      logInfo(
+        { event: 'mr_processing', mrIid: noteableIid, sourceBranch },
+        `Processing MR comment: ${sourceBranch}`
+      );
 
-    const response = await cli.prompt(prompt, {
+      // Switch to source branch if needed
+      const git = simpleGit(workingDirectory);
+      try {
+        const currentBranch = (await git.branch()).current;
+        if (currentBranch !== sourceBranch) {
+          logInfo(
+            { event: 'workspace_switch_branch', from: currentBranch, to: sourceBranch },
+            `Switching workspace to MR source branch`
+          );
+          await git.fetch('origin', sourceBranch);
+          await git.checkout(['-B', sourceBranch, `origin/${sourceBranch}`]).catch(async () => {
+            await git.checkout(sourceBranch);
+          });
+        }
+      } catch (branchError) {
+        logWarn(
+          { event: 'branch_switch_failed', error: String(branchError) },
+          'Failed to switch to source branch, continuing with current branch'
+        );
+      }
+
+      const prompt = buildMRPrompt(instruction, history, mr.title, sourceBranch);
+      logDebug({ event: 'claude_cli_call', prompt_length: prompt.length }, 'Calling Claude CLI for MR');
+
+      response = await cli.prompt(prompt, {
+        systemPrompt,
+        workingDirectory,
+      });
+
+      // Check for uncommitted changes and commit/push
+      const status = await git.status();
+      const hasChanges = !status.isClean();
+
+      if (hasChanges) {
+        let commitMessage = 'Update code';
+        const jsonMatch = response.match(/\{[\s\S]*?\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.commit_message) {
+              commitMessage = parsed.commit_message;
+            }
+          } catch {
+            // Not valid JSON
+          }
+        }
+
+        logInfo(
+          { event: 'git_commit_push', branch: sourceBranch, commitMessage },
+          `Committing and pushing changes to MR branch`
+        );
+
+        await git.add('.');
+        await git.commit(commitMessage);
+        await git.push('origin', sourceBranch, ['--force-with-lease']);
+
+        logInfo({ event: 'git_push_completed', branch: sourceBranch }, 'Changes pushed to MR branch');
+      } else {
+        logInfo({ event: 'no_changes_to_commit' }, 'No changes to commit');
+      }
+
+      // Post response
+      const jsonMatch = response.match(/\{[\s\S]*?\}/);
+      const responseText = jsonMatch ? response.replace(jsonMatch[0], '').trim() : response;
+      const parsed = jsonMatch ? (() => { try { return JSON.parse(jsonMatch[0]); } catch { return null; } })() : null;
+
+      let postedResponse = '';
+      if (parsed?.code_changed) {
+        postedResponse = `🤖 Claude 回复：
+
+${responseText}
+
+---
+
+**代码变更**：${parsed.summary || '代码变更'}
+
+**提交信息**：${parsed.commit_message || 'Update code'}
+
+**分支**：${sourceBranch}`;
+      } else {
+        postedResponse = `🤖 Claude 回复：
+
+${responseText}`;
+      }
+
+      await gitlab.notes.create(project.id, noteableIid, postedResponse, noteableType);
+
+      logInfo(
+        { event: 'claude_mr_completed', codeChanged: hasChanges },
+        `MR comment processed, code_changed=${hasChanges}`
+      );
+      return;
+    }
+
+    // Issue: Claude decides autonomously
+    const prompt = buildIssuePrompt(payload, instruction, history);
+    logDebug({ event: 'claude_cli_call', prompt_length: prompt.length }, 'Calling Claude CLI for Issue');
+
+    response = await cli.prompt(prompt, {
       systemPrompt,
-      timeout,
       workingDirectory,
     });
 
-    // Handle code change response
-    if (isCodeChange) {
-      const parsed = parseCodeChangeResponse(response);
-      if (!parsed) {
-        // If can't parse JSON, just post the raw response
-        const formattedResponse = `🤖 Claude 回复：
+    const jsonMatch = response.match(/\{[\s\S]*?\}/);
+    let responseText = response;
+    let codeChangeInfo: { summary: string; changedFiles: string[]; commitMessage: string; createMR: boolean; branch?: string } | null = null;
 
-${response}`;
-        await gitlab.notes.create(
-          project.id,
-          noteableIid,
-          formattedResponse,
-          noteableType
-        );
-        logInfo(
-          { event: 'claude_code_response_raw', response_length: response.length },
-          'Code change response posted as raw text'
-        );
-        return;
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.code_changed === true && parsed.commit_message) {
+          codeChangeInfo = {
+            summary: parsed.summary || '代码变更',
+            changedFiles: parsed.changed_files || [],
+            commitMessage: parsed.commit_message,
+            createMR: parsed.create_mr === true,
+            branch: parsed.branch,
+          };
+          responseText = response.replace(jsonMatch[0], '').trim();
+        }
+      } catch {
+        // Not valid JSON
       }
+    }
 
-      // Post the summary
-      const summaryResponse = `🤖 Claude 已完成代码编写！
-
-**变更说明**：${parsed.summary}
-
-**变更文件**：
-${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
-
-**提交信息**：${parsed.commitMessage}
-
-正在提交代码...`;
-
-      await gitlab.notes.create(
-        project.id,
-        noteableIid,
-        summaryResponse,
-        noteableType
-      );
+    if (codeChangeInfo?.createMR && codeChangeInfo.branch) {
+      const { handleCreateMR } = await import('./create-mr.js');
 
       logInfo(
-        {
-          event: 'claude_code_completed',
-          changedFiles: parsed.changedFiles,
-          commitMessage: parsed.commitMessage,
-        },
-        'Code change completed, summary posted'
+        { event: 'create_mr_triggered', summary: codeChangeInfo.summary, branch: codeChangeInfo.branch },
+        'MR creation triggered from Issue'
       );
-    } else {
-      // Handle Q&A response - check if Claude made code changes
-      // First, extract any JSON from the response
-      const jsonMatch = response.match(/\{[\s\S]*?\}/);
-      let responseText = response;
-      let codeChangeInfo: { summary: string; changedFiles: string[]; commitMessage: string } | null = null;
 
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed.code_changed === true && parsed.commit_message) {
-            codeChangeInfo = {
-              summary: parsed.summary || '代码变更',
-              changedFiles: parsed.changed_files || [],
-              commitMessage: parsed.commit_message,
-            };
-            // Remove the JSON from the response text
-            responseText = response.replace(jsonMatch[0], '').trim();
-          }
-        } catch {
-          // Not valid JSON, treat as regular response
-        }
+      const formattedResponse = `🤖 Claude 回复：
+
+${responseText}
+
+---
+
+**代码变更**：${codeChangeInfo.summary}
+
+**变更文件**：
+${codeChangeInfo.changedFiles.map((f) => `- ${f}`).join('\n')}
+
+**提交信息**：${codeChangeInfo.commitMessage}
+
+**分支**：${codeChangeInfo.branch}
+
+正在创建 MR...`;
+
+      await gitlab.notes.create(project.id, noteableIid, formattedResponse, noteableType);
+
+      if (payload.issue) {
+        const issuePayload: IssueWebhookPayload = {
+          object_kind: 'issue',
+          event_type: 'Issue Hook',
+          object_attributes: {
+            id: (payload.issue as any).id || 0,
+            iid: payload.issue!.iid,
+            title: payload.issue!.title,
+            description: (payload.issue as any).description || '',
+            state: ((payload.issue as any).state as any) || 'opened',
+            action: 'open',
+            created_at: ((payload.issue as any).created_at as string) || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            labels: [],
+          },
+          project: payload.project,
+          user: payload.user,
+        };
+
+        await handleCreateMR({ payload: issuePayload }).catch((err) => {
+          logError({ event: 'create_mr_failed', error: String(err) }, 'Failed to create MR');
+        });
       }
-
-      // Post the response
+    } else {
       const formattedResponse = `🤖 Claude 回复：
 
 ${responseText}${codeChangeInfo ? `\n\n**代码变更**：${codeChangeInfo.summary}\n\n**变更文件**：\n${codeChangeInfo.changedFiles.map((f) => `- ${f}`).join('\n')}\n\n**提交信息**：${codeChangeInfo.commitMessage}` : ''}`;
 
-      await gitlab.notes.create(
-        project.id,
-        noteableIid,
-        formattedResponse,
-        noteableType
-      );
+      await gitlab.notes.create(project.id, noteableIid, formattedResponse, noteableType);
 
-      if (codeChangeInfo) {
-        logInfo(
-          {
-            event: 'claude_qa_with_code_change',
-            summary: codeChangeInfo.summary,
-            changedFiles: codeChangeInfo.changedFiles,
-          },
-          'Q&A response with code changes detected'
-        );
-      } else {
-        logInfo(
-          {
-            event: 'claude_comment_response_sent',
-            project_id: project.id,
-            noteable_type: noteableType,
-            response_length: response.length,
-          },
-          'Claude comment response sent successfully'
-        );
-      }
+      logInfo(
+        { event: 'claude_comment_response_sent', project_id: project.id, noteable_type: noteableType },
+        'Claude comment response sent successfully'
+      );
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
