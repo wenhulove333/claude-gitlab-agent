@@ -9,8 +9,10 @@ export interface ProjectSettings {
   autoReviewEnabled: boolean;
   /** Whether creating MRs is enabled */
   createMREnabled: boolean;
-  /** Claude bot username */
-  claudeBotUsername: string;
+  /** Bot display name (e.g., 小智) */
+  botName: string;
+  /** Bot GitLab username */
+  botUsername: string;
   /** Paths to exclude from auto review */
   excludePaths: string[];
   /** Max files to review */
@@ -23,7 +25,8 @@ const DEFAULT_SETTINGS: ProjectSettings = {
   claudeEnabled: true,
   autoReviewEnabled: true,
   createMREnabled: false, // Off by default for safety
-  claudeBotUsername: 'claude-bot',
+  botName: '小智',
+  botUsername: 'claude-bot',
   excludePaths: ['*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'],
   maxReviewFiles: 20,
   maxReviewDiffChars: 100000,
@@ -59,6 +62,7 @@ export async function getProjectSettings(projectId: number): Promise<ProjectSett
       'CLAUDE_ENABLED',
       'CLAUDE_AUTO_REVIEW_ENABLED',
       'CLAUDE_CREATE_MR_ENABLED',
+      'CLAUDE_BOT_NAME',
       'CLAUDE_BOT_USERNAME',
       'CLAUDE_EXCLUDE_PATHS',
       'CLAUDE_MAX_REVIEW_FILES',
@@ -84,8 +88,11 @@ export async function getProjectSettings(projectId: number): Promise<ProjectSett
           case 'CLAUDE_CREATE_MR_ENABLED':
             settings.createMREnabled = value === 'true';
             break;
+          case 'CLAUDE_BOT_NAME':
+            settings.botName = value;
+            break;
           case 'CLAUDE_BOT_USERNAME':
-            settings.claudeBotUsername = value;
+            settings.botUsername = value;
             break;
           case 'CLAUDE_EXCLUDE_PATHS':
             settings.excludePaths = value.split(',').map((s) => s.trim());
@@ -136,6 +143,30 @@ export function clearProjectSettingsCache(projectId?: number): void {
 }
 
 /**
+ * Get the bot name for display in messages
+ * Uses project settings if available, otherwise falls back to global BOT_NAME env
+ */
+export async function getBotName(projectId?: number): Promise<string> {
+  if (projectId) {
+    const settings = await getProjectSettings(projectId);
+    return settings.botName;
+  }
+  return getEnv().BOT_NAME;
+}
+
+/**
+ * Get the bot username for GitLab API operations
+ * Uses project settings if available, otherwise falls back to global BOT_USERNAME env
+ */
+export async function getBotUsername(projectId?: number): Promise<string> {
+  if (projectId) {
+    const settings = await getProjectSettings(projectId);
+    return settings.botUsername;
+  }
+  return getEnv().BOT_USERNAME;
+}
+
+/**
  * Update project settings (creates or updates GitLab variables)
  */
 export async function updateProjectSettings(
@@ -159,8 +190,11 @@ export async function updateProjectSettings(
   if (settings.createMREnabled !== undefined) {
     variableMap['CLAUDE_CREATE_MR_ENABLED'] = String(settings.createMREnabled);
   }
-  if (settings.claudeBotUsername !== undefined) {
-    variableMap['CLAUDE_BOT_USERNAME'] = settings.claudeBotUsername;
+  if (settings.botName !== undefined) {
+    variableMap['CLAUDE_BOT_NAME'] = settings.botName;
+  }
+  if (settings.botUsername !== undefined) {
+    variableMap['CLAUDE_BOT_USERNAME'] = settings.botUsername;
   }
   if (settings.excludePaths !== undefined) {
     variableMap['CLAUDE_EXCLUDE_PATHS'] = settings.excludePaths.join(',');

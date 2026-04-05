@@ -55,13 +55,29 @@
 ### 3.1 评论交互：`@claude` 智能问答
 
 **功能描述**\
-用户在 Issue 或 Merge Request 的评论区输入 `@claude` 后跟任意自然语言指令，Claude 理解指令并返回回答。
+用户在 Issue 或 Merge Request 的评论区输入 `@claude` 后跟任意自然语言指令，Claude 理解指令并自主判断是否需要修改代码。如需修改，Claude 自动完成代码变更并提交。
 
 **触发规则**
 
 - 格式：`@claude <指令>`（大小写不敏感，前后可有空格）
 - 指令长度：≤ 2000 字符
 - 响应位置：在原对话下方新建评论，内容以 `🤖 Claude 回复：` 开头
+
+**自主决策机制**
+
+Claude 在每次对话中自主判断是否需要修改代码：
+
+| 场景 | Claude 行为 |
+|------|------------|
+| 解释代码、分析问题、回答疑问 | 仅回复，不修改代码 |
+| 用户请求代码修改、修复 bug、重构 | 修改代码并自动提交 |
+| Review 代码、解释错误日志 | 仅回复，不修改代码 |
+
+**代码变更自动提交规则**
+
+- **MR 中**：`code_changed: true` 时，代码自动提交到 MR 源分支
+- **Issue 中**：`code_changed: true` 且 `create_mr: true` 时，创建新分支并提交 MR
+- Claude 必须在回复末尾输出 JSON 格式的状态：`{"code_changed": true/false, "summary": "...", "commit_message": "...", "create_mr": true/false}`
 
 **能力范围（支持）**
 
@@ -70,11 +86,11 @@
 - 生成单元测试样例
 - 建议代码优化方案
 - 回答 GitLab CI/CD 配置问题
-- 读取工作空间内的文件（需显式授权）
+- 自主决定是否修改代码并自动提交
+- 代码 Review
 
 **能力范围（不支持）**
 
-- 直接修改代码并提交（需使用 `/create-mr` 命令，见 3.3）
 - 删除仓库或分支
 - 修改项目设置或成员权限
 - 执行破坏性命令（如 `rm -rf`）
@@ -86,6 +102,69 @@
 | 无指令（只有 `@claude`） | “请提供具体指令，例如 `@claude 解释一下这个函数`” |
 | 指令包含敏感操作          | “该操作不被允许，请人工执行”                 |
 | Claude 响应超时（>60秒） | “处理超时，请简化指令或稍后重试”               |
+
+***
+
+### 3.1.1 Issue 自动分析
+
+**功能描述**\
+当 Issue 被创建（`action = “open”`）时，Claude 自动分析 Issue 内容并生成详细的设计文档，以 Markdown 格式发布到 Issue 评论区。
+
+**触发规则**
+
+- Issue 状态变为 `opened` 时自动触发
+- 不响应 `reopen` 事件（避免重复分析）
+
+**分析流程**
+
+| 步骤 | 动作                                    | 负责组件            |
+| :-- | :------------------------------------ | :-------------- |
+| 1  | 解析 Issue 标题、描述                        | Webhook 服务      |
+| 2  | 准备工作空间（克隆仓库）                       | Workspace Manager |
+| 3  | 调用 Claude CLI，传入分析提示词                | Claude CLI       |
+| 4  | Claude 阅读代码库、分析 Issue 关联性             | Claude CLI       |
+| 5  | Claude 输出 Markdown 设计文档                 | Claude CLI       |
+| 6  | 将设计文档发布为 Issue 评论                    | GitLab API       |
+
+**分析提示词结构**
+
+```text
+你是一个资深产品经理和架构师。你的任务是对 Issue 进行分析并生成详细的设计文档。
+
+## 项目信息
+- 项目：{project_path}
+- Issue 编号：#{issue_iid}
+
+## Issue 信息
+- 标题：{title}
+- 描述：{description}
+
+## 分析要求
+1. 首先通读代码库，了解项目结构
+2. 分析 Issue 与项目的关联性
+3. 如果与项目相关，生成详细的设计文档
+
+## 输出要求
+请直接输出 Markdown 格式的设计文档，包含：
+- 分类（新功能/优化改进/问题修复/与项目无关）
+- 一句话总结
+- 背景说明
+- 详细设计方案
+- 验收标准
+```
+
+**输出格式**
+
+- 直接输出 Markdown，不包含 JSON
+- 内容以 `## 📋 Issue 分析报告` 开头
+- 发布为 Issue 评论区评论
+
+**失败处理**
+
+| 失败场景    | 用户提示                              |
+| :------ | :-------------------------------- |
+| 超时（>120秒） | “Issue 分析超时，请稍后重试”             |
+| API 失败   | 记录日志，不影响 Issue 正常创建              |
 
 ***
 
@@ -353,7 +432,8 @@ Issue 内容：
 | `WORKSPACE_CPU_LIMIT`       | `0.5`                | 每个工作空间的 CPU 核数限制（Docker 模式）                              |
 | `WORKSPACE_MEMORY_LIMIT_MB` | `1024`               | 内存限制 MB（Docker 模式）                                       |
 | `MAX_MR_FILES`              | 20                   | 自动审查最大文件数                                                |
-| `CLI_TIMEOUT_SECONDS`       | 300                  | Claude CLI 执行超时（秒）                                       |
+| `CLI_TIMEOUT_SECONDS`       | 120                  | Claude CLI 执行超时（秒）                                       |
+| `CLI_HEARTBEAT_INTERVAL`   | 30                   | Claude CLI 心跳检测间隔（秒），检测子进程判断是否仍在工作                   |
 | `CLEANUP_ON_CLOSE_ENABLED`  | `true`               | 是否启用关闭时清理                                                |
 
 ### 6.2 项目级配置（通过 GitLab 自定义属性或配置文件）
@@ -373,12 +453,26 @@ Issue 内容：
 
 1. **开发者**：在 Issue #123 中描述 bug，然后评论 `@claude 请修复这个 bug，并创建 MR`。
 2. **Claude 助手**（自动）：
-   - 回复“正在处理，请稍候...”。
-   - 分析 Issue，生成代码补丁，推送到分支 `claude/issue-123-fix-null-pointer`。
+   - 回复”正在处理，请稍候...”。
+   - 分析 Issue，判断需要修改代码。
+   - 使用 Edit/Write 工具修改代码。
+   - 在回复末尾输出 `{“code_changed”: true, “summary”: “...”, “commit_message”: “...”}`。
+   - 系统自动创建分支 `claude/issue-123-fix-null-pointer`，提交代码并推送。
    - 创建 MR #456，标题为 `[Claude] Fix null pointer exception in login #123`。
-   - 在 Issue #123 中回复：“已创建 MR #456，请审阅。”
+   - 在 Issue #123 中回复：”已创建 MR #456，请审阅。”
 3. **开发者**：查看 MR #456，确认变更正确，批准并合并。
 4. **Claude 助手**：不主动关闭 Issue，由开发者手动关闭。当 Issue 关闭时，工作空间自动清理。
+
+### 7.1.1 典型场景：MR 中直接修改代码
+
+1. **开发者**：在 MR #789 的评论区 `@claude 在这个函数里加个日志输出`。
+2. **Claude 助手**（自动）：
+   - 回复”正在处理，请稍候...”。
+   - 判断需要修改代码。
+   - 修改代码，在回复末尾输出 `{“code_changed”: true, “commit_message”: “Add logging to function”}`。
+   - 系统自动提交到 MR 源分支并 force-push。
+   - 回复：”代码已修改并提交。**分支**：`feature/add-logging`”
+3. **开发者**：在 MR 页面看到新提交，可以继续审阅。
 
 ### 7.2 典型场景二：自动代码审查
 
@@ -389,11 +483,15 @@ Issue 内容：
 3. **开发者 A**：根据建议修改代码，push 新 commit。
 4. **Claude 助手**：不重复审查（仅对 open/reopen 触发）。若需再次审查，开发者可手动 `@claude /review`（扩展功能，v1.1）。
 
-### 7.3 典型场景三：纯问答
+### 7.3 典型场景三：纯问答（不修改代码）
 
 1. **开发者**：在 MR #101 的评论区 `@claude 解释一下这个错误日志的含义`。
-2. **Claude 助手**：分析日志，回复解释和建议。
+2. **Claude 助手**：
+   - 分析日志，回复解释和建议。
+   - 回复末尾输出 `{"code_changed": false, "summary": "解释错误日志含义"}`。
+   - 不修改代码，不提交。
 3. **开发者**：继续追问 `@claude 那如何修复呢？`（同一 MR 内，复用工作空间，Claude 能记住对话上下文）。
+4. **Claude 助手**：如果判断需要修复，在回复末尾输出 `{"code_changed": true, "commit_message": "..."}`，系统自动提交到 MR 源分支。
 
 ***
 

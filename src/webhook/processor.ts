@@ -41,6 +41,7 @@ export function createWebhookHandlers(): WebhookHandler {
         );
 
         // Auto-create workspace for new/reopened issues
+        let workspacePath: string | undefined;
         try {
           const workspace = await workspaceManager.getOrCreate({
             type: 'issue',
@@ -53,6 +54,7 @@ export function createWebhookHandlers(): WebhookHandler {
             ),
             defaultBranch: project.default_branch,
           });
+          workspacePath = workspace.path;
           logger.info(
             { event: 'workspace_auto_created', workspace_id: workspace.id, issue_iid: iid },
             `Workspace auto-created for Issue #${iid}`
@@ -75,11 +77,11 @@ export function createWebhookHandlers(): WebhookHandler {
             await gitlab.issues.createNote(
               project.id,
               iid,
-              '🤖 Claude 正在分析 Issue，请稍候...'
+              `🤖 ${getEnv().BOT_NAME} 正在分析 Issue，请稍候...`
             );
 
-            // Analyze issue in background
-            analyzeIssue(payload).catch((error) => {
+            // Analyze issue in background, passing workspace path if available
+            analyzeIssue({ payload, workspacePath }).catch((error) => {
               logger.error(
                 { event: 'analyze_issue_error', issue_iid: iid, error },
                 `Failed to analyze issue: ${error}`
@@ -129,7 +131,7 @@ export function createWebhookHandlers(): WebhookHandler {
         excludePaths: ['*.lock', 'package-lock.json', 'yarn.lock'],
       };
 
-      const botUsername = 'claude'; // This should come from project settings
+      const botUsername = getEnv().BOT_USERNAME;
 
       // Handle auto review and workspace for open/reopen
       if (action === 'open' || action === 'reopen') {

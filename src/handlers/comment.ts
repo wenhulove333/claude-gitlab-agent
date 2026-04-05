@@ -2,158 +2,160 @@ import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
+import { buildPrompt, validateResponse, generateRetryPrompt } from '../claude/prompts/index.js';
 import type { NoteWebhookPayload, IssueWebhookPayload } from '../webhook/types.js';
 import type { Note } from '../gitlab/types.js';
 import { getEnv } from '../config/index.js';
 import simpleGit from 'simple-git';
 
-// Pattern to match @claude command
-const CLAUDE_COMMAND_PATTERN = /^@claude\s*/i;
 const MAX_INSTRUCTION_LENGTH = 2000;
 
 /**
- * Check if a comment contains a @claude command
+ * Get the command patterns for both BOT_NAME and BOT_USERNAME
+ */
+function getCommandPatterns(): RegExp[] {
+  const env = getEnv();
+  return [
+    new RegExp(`^@${env.BOT_NAME}\\s*`, 'i'),
+    new RegExp(`^@${env.BOT_USERNAME}\\s*`, 'i'),
+  ];
+}
+
+/**
+ * Check if a comment contains a @bot command
  */
 export function isClaudeCommand(comment: string): boolean {
-  return CLAUDE_COMMAND_PATTERN.test(comment);
+  return getCommandPatterns().some((pattern) => pattern.test(comment));
 }
 
 /**
- * Extract the instruction after @claude
+ * Extract the instruction after @bot
  */
 export function extractInstruction(comment: string): string | null {
-  const match = comment.match(CLAUDE_COMMAND_PATTERN);
-  if (!match) return null;
-
-  const instruction = comment.slice(match[0].length).trim();
-  if (!instruction) return null;
-
-  return instruction.slice(0, MAX_INSTRUCTION_LENGTH);
+  const patterns = getCommandPatterns();
+  for (const pattern of patterns) {
+    const match = comment.match(pattern);
+    if (match) {
+      const instruction = comment.slice(match[0].length).trim();
+      if (instruction) {
+        return instruction.slice(0, MAX_INSTRUCTION_LENGTH);
+      }
+    }
+  }
+  return null;
 }
 
 /**
- * Build context for Claude CLI prompt
+ * Build prompt for Issue comment using unified prompt system
  */
-function buildPromptContext(
+function buildIssuePromptForComment(
   payload: NoteWebhookPayload,
   instruction: string,
   history: Note[]
 ): string {
-  const { noteable_type } = payload.object_attributes;
   const project = payload.project;
   const user = payload.user;
 
-  let context = `用户 ${user.username} 在 ${noteable_type} 中请求帮助。\n\n`;
-  context += `项目：${project.path_with_namespace}\n`;
-  context += `请求：${instruction}\n`;
+  // Format history for unified prompt
+  const env = getEnv();
+  const atBotName = `@${env.BOT_NAME}`;
+  const atBotUsername = `@${env.BOT_USERNAME}`;
+  const formattedHistory = history
+    .filter((note) => {
+      // Skip the current @bot comment itself
+      const isBotMention = note.body.includes(atBotName) || note.body.includes(atBotUsername);
+      return !(isBotMention && note.author.username === user.username);
+    })
+    .map((note) => ({
+      author: note.author.username,
+      body: note.body,
+    }));
 
-  // Add issue/MR context if available
-  if (noteable_type === 'Issue' && payload.issue) {
-    context += `\nIssue 信息：\n`;
-    context += `- 编号：#${payload.issue.iid}\n`;
-    context += `- 标题：${payload.issue.title}\n`;
-  } else if (noteable_type === 'MergeRequest' && payload.merge_request) {
-    context += `\nMerge Request 信息：\n`;
-    context += `- 编号：!${payload.merge_request.iid}\n`;
-    context += `- 标题：${payload.merge_request.title}\n`;
-  }
-
-  // Add conversation history
-  if (history.length > 0) {
-    context += `\n对话历史：\n`;
-    for (const note of history) {
-      // Skip the current @claude comment itself
-      if (note.body.includes('@claude') && note.author.username === user.username) {
-        continue;
-      }
-      context += `- ${note.author.username}: ${note.body}\n`;
-    }
-  }
-
-  return context;
+  return buildPrompt({
+    role: 'developer',
+    scenario: 'comment-issue',
+    context: {
+      projectPath: project.path_with_namespace,
+      user: { username: user.username },
+      issue: payload.issue ? {
+        iid: payload.issue.iid,
+        title: payload.issue.title,
+      } : undefined,
+      history: formattedHistory.length > 0 ? formattedHistory : undefined,
+    },
+    task: instruction,
+  });
 }
 
 /**
- * Build the full prompt for Claude CLI
+ * Build prompt for MR comment using unified prompt system
  */
-function buildIssuePrompt(
-  payload: NoteWebhookPayload,
+function buildMRPromptForComment(
+  projectPath: string,
+  mrIid: number,
+  mrTitle: string,
+  sourceBranch: string,
   instruction: string,
   history: Note[]
 ): string {
-  const context = buildPromptContext(payload, instruction, history);
+  // Format history for unified prompt
+  const formattedHistory = history.map((note) => ({
+    author: note.author.username,
+    body: note.body,
+  }));
 
-  const fullPrompt = `${context}
-
-请回答用户的问题。
-
-## 关于代码变更
-**重要约束**：如果你需要修改代码，只能使用 Edit/Write 工具，禁止执行任何 git 命令。
-
-如果你在回答过程中对项目代码做了修改（包括创建、编辑、删除文件），请在回答的最后输出以下格式的 JSON（只输出 JSON，不要有其他内容）：
-{
-  "code_changed": true,
-  "summary": "本次变更的简要说明",
-  "changed_files": ["file1.ts", "file2.ts"],
-  "commit_message": "提交信息",
-  "create_mr": true或false  // 如果需要创建 MR 则为 true
-}
-
-**判断标准**：
-- 如果只是回答问题、解释代码、讨论方案 → 不输出 JSON
-- 如果对代码做了修改，且需要创建 MR → create_mr: true
-- 如果对代码做了修改，只需提交到当前分支 → create_mr: false
-- 提交操作由系统自动完成`;
-
-  return fullPrompt;
+  return buildPrompt({
+    role: 'developer',
+    scenario: 'comment-mr',
+    context: {
+      projectPath,
+      mr: {
+        iid: mrIid,
+        title: mrTitle,
+        sourceBranch,
+      },
+      history: formattedHistory.length > 0 ? formattedHistory : undefined,
+    },
+    task: instruction,
+  });
 }
 
 /**
- * Build prompt for MR - Claude decides whether to make code changes
- * If code is changed, it commits to the MR's source branch
+ * 调用 Claude CLI 并验证响应
+ * 如果响应包含禁止的命令，会重新调用
  */
-function buildMRPrompt(
-  instruction: string,
-  history: Note[],
-  mrTitle: string,
-  sourceBranch: string
-): string {
-  const conversationHistory = history.length > 0
-    ? history.map((n) => `- ${n.author.username}: ${n.body}`).join('\n')
-    : '(无)';
+async function callClaudeWithValidation(
+  cli: ReturnType<typeof getClaudeCLI>,
+  prompt: string,
+  options: {
+    workingDirectory?: string;
+    systemPrompt?: string;
+    maxRetries?: number;
+  } = {}
+): Promise<string> {
+  const { workingDirectory, systemPrompt, maxRetries = 2 } = options;
+  let currentPrompt = prompt;
 
-  return `你是一个资深开发者。请回答用户的问题，并在需要时修改代码。
+  for (let i = 0; i <= maxRetries; i++) {
+    const response = await cli.prompt(currentPrompt, {
+      workingDirectory,
+      systemPrompt,
+    });
 
-## MR 信息
-- MR 标题：${mrTitle}
-- 源分支：${sourceBranch}
+    const validation = validateResponse(response);
+    if (validation.valid) {
+      return response;
+    }
 
-## 用户问题
-${instruction}
+    // 验证失败，追加约束提醒重新生成
+    currentPrompt = generateRetryPrompt(prompt, validation.reason || '响应不符合要求');
+    logWarn(
+      { event: 'claude_response_invalid', retry: i + 1, reason: validation.reason },
+      `Claude response validation failed, retrying...`
+    );
+  }
 
-## 对话历史
-${conversationHistory}
-
-## 关于代码变更
-**重要约束**：如果你需要修改代码，只能使用 Edit/Write 工具，禁止执行任何 git 命令。
-
-如果你在回答过程中对项目代码做了修改（包括创建、编辑、删除文件），请在回答的最后输出以下格式的 JSON（只输出 JSON，不要有其他内容）：
-{
-  "code_changed": true,
-  "summary": "本次变更的简要说明",
-  "commit_message": "提交信息（简洁描述变更内容）"
-}
-
-**判断标准**：
-- 如果只是回答问题、解释代码、讨论方案 → 不输出 JSON
-- 如果对代码做了修改 → 输出上述 JSON
-
-## 提交说明
-- 如果输出了 JSON，代码将被自动提交到 MR 的源分支 "${sourceBranch}"
-- 请勿在代码中使用 git 命令，提交操作由系统自动完成
-- 提交信息应简洁清晰
-
-请回答用户的问题。`;
+  throw new Error('Claude 响应验证失败，已达到最大重试次数');
 }
 
 export interface HandleCommentOptions {
@@ -202,6 +204,7 @@ export async function handleClaudeComment(
     baseUrl: env.GITLAB_URL,
     token: env.GITLAB_ACCESS_TOKEN,
   });
+  const botName = env.BOT_NAME;
 
   const noteableType = payload.object_attributes.noteable_type;
   const noteableIid = noteableType === 'Issue'
@@ -256,7 +259,7 @@ export async function handleClaudeComment(
       await gitlab.notes.create(
         project.id,
         noteableIid,
-        `🤖 Claude：工作空间准备失败：${errorMessage}\n\n请稍后重试。`,
+        `🤖 ${botName}：工作空间准备失败：${errorMessage}\n\n请稍后重试。`,
         noteableType
       );
     } catch {}
@@ -265,7 +268,7 @@ export async function handleClaudeComment(
 
   // Post initial "processing" comment
   try {
-    await gitlab.notes.create(project.id, noteableIid, '🤖 Claude 正在处理，请稍候...', noteableType);
+    await gitlab.notes.create(project.id, noteableIid, `🤖 ${botName} 正在处理，请稍候...`, noteableType);
   } catch (postError) {
     const postErrorMsg = postError instanceof Error ? postError.message : String(postError);
     logWarn({ event: 'initial_comment_post_failed', error: postErrorMsg }, 'Failed to post initial processing comment');
@@ -319,12 +322,12 @@ export async function handleClaudeComment(
         );
       }
 
-      const prompt = buildMRPrompt(instruction, history, mr.title, sourceBranch);
+      const prompt = buildMRPromptForComment(project.path_with_namespace, noteableIid, mr.title, sourceBranch, instruction, history);
       logDebug({ event: 'claude_cli_call', prompt_length: prompt.length }, 'Calling Claude CLI for MR');
 
-      response = await cli.prompt(prompt, {
-        systemPrompt,
+      response = await callClaudeWithValidation(cli, prompt, {
         workingDirectory,
+        systemPrompt,
       });
 
       // Check for uncommitted changes and commit/push
@@ -366,9 +369,9 @@ export async function handleClaudeComment(
 
       let postedResponse = '';
       if (parsed?.code_changed) {
-        postedResponse = `🤖 Claude 回复：
+        postedResponse = `🤖 ${botName} 回复：
 
-${responseText}
+${responseText || '代码已修改并提交。'}
 
 ---
 
@@ -378,9 +381,10 @@ ${responseText}
 
 **分支**：${sourceBranch}`;
       } else {
-        postedResponse = `🤖 Claude 回复：
+        const responseContent = responseText || '已收到您的请求。';
+        postedResponse = `🤖 ${botName} 回复：
 
-${responseText}`;
+${responseContent}`;
       }
 
       await gitlab.notes.create(project.id, noteableIid, postedResponse, noteableType);
@@ -393,28 +397,31 @@ ${responseText}`;
     }
 
     // Issue: Claude decides autonomously
-    const prompt = buildIssuePrompt(payload, instruction, history);
+    const prompt = buildIssuePromptForComment(payload, instruction, history);
     logDebug({ event: 'claude_cli_call', prompt_length: prompt.length }, 'Calling Claude CLI for Issue');
 
-    response = await cli.prompt(prompt, {
-      systemPrompt,
+    response = await callClaudeWithValidation(cli, prompt, {
       workingDirectory,
+      systemPrompt,
     });
+
+    // Check for uncommitted changes
+    const git = simpleGit(workingDirectory);
+    const status = await git.status();
+    const hasChanges = !status.isClean();
 
     const jsonMatch = response.match(/\{[\s\S]*?\}/);
     let responseText = response;
-    let codeChangeInfo: { summary: string; changedFiles: string[]; commitMessage: string; createMR: boolean; branch?: string } | null = null;
+    let codeChangeInfo: { summary: string; changedFiles: string[]; commitMessage: string } | null = null;
 
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.code_changed === true && parsed.commit_message) {
+        if (parsed.code_changed === true) {
           codeChangeInfo = {
             summary: parsed.summary || '代码变更',
             changedFiles: parsed.changed_files || [],
-            commitMessage: parsed.commit_message,
-            createMR: parsed.create_mr === true,
-            branch: parsed.branch,
+            commitMessage: parsed.commit_message || 'Update code',
           };
           responseText = response.replace(jsonMatch[0], '').trim();
         }
@@ -423,45 +430,42 @@ ${responseText}`;
       }
     }
 
-    if (codeChangeInfo?.createMR && codeChangeInfo.branch) {
+    // If there are uncommitted changes, create MR
+    if (hasChanges) {
+      logInfo({ event: 'code_changes_detected' }, 'Code changes detected, will create MR');
+
       const { handleCreateMR } = await import('./create-mr.js');
 
-      logInfo(
-        { event: 'create_mr_triggered', summary: codeChangeInfo.summary, branch: codeChangeInfo.branch },
-        'MR creation triggered from Issue'
-      );
-
-      const formattedResponse = `🤖 Claude 回复：
+      const formattedResponse = `🤖 ${botName} 回复：
 
 ${responseText}
 
 ---
 
-**代码变更**：${codeChangeInfo.summary}
+**代码变更**：${codeChangeInfo?.summary || '代码变更'}
 
 **变更文件**：
-${codeChangeInfo.changedFiles.map((f) => `- ${f}`).join('\n')}
+${(codeChangeInfo?.changedFiles || status.modified || []).map((f: string) => `- ${f}`).join('\n')}
 
-**提交信息**：${codeChangeInfo.commitMessage}
-
-**分支**：${codeChangeInfo.branch}
+**提交信息**：${codeChangeInfo?.commitMessage || 'Update code'}
 
 正在创建 MR...`;
 
       await gitlab.notes.create(project.id, noteableIid, formattedResponse, noteableType);
 
       if (payload.issue) {
+        // Note: handleCreateMR will fetch the issue details itself to get labels for branch naming
         const issuePayload: IssueWebhookPayload = {
           object_kind: 'issue',
           event_type: 'Issue Hook',
           object_attributes: {
-            id: (payload.issue as any).id || 0,
-            iid: payload.issue!.iid,
-            title: payload.issue!.title,
-            description: (payload.issue as any).description || '',
-            state: ((payload.issue as any).state as any) || 'opened',
+            id: 0,
+            iid: payload.issue.iid,
+            title: payload.issue.title,
+            description: '',
+            state: 'opened',
             action: 'open',
-            created_at: ((payload.issue as any).created_at as string) || new Date().toISOString(),
+            created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             labels: [],
           },
@@ -474,9 +478,11 @@ ${codeChangeInfo.changedFiles.map((f) => `- ${f}`).join('\n')}
         });
       }
     } else {
-      const formattedResponse = `🤖 Claude 回复：
+      // No changes - post response
+      let responseContent = responseText.trim() || '已收到您的请求。';
+      const formattedResponse = `🤖 ${botName} 回复：
 
-${responseText}${codeChangeInfo ? `\n\n**代码变更**：${codeChangeInfo.summary}\n\n**变更文件**：\n${codeChangeInfo.changedFiles.map((f) => `- ${f}`).join('\n')}\n\n**提交信息**：${codeChangeInfo.commitMessage}` : ''}`;
+${responseContent}`;
 
       await gitlab.notes.create(project.id, noteableIid, formattedResponse, noteableType);
 
@@ -494,7 +500,7 @@ ${responseText}${codeChangeInfo ? `\n\n**代码变更**：${codeChangeInfo.summa
 
     // Post error message
     try {
-      const errorResponse = `🤖 Claude 回复：
+      const errorResponse = `🤖 ${botName} 回复：
 
 处理失败：${errorMessage}
 

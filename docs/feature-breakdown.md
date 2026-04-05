@@ -78,21 +78,43 @@
 
 ### 3.1 评论问答 `@claude`
 
-**功能描述**：用户在 Issue/MR 评论 `@claude <指令>`，Claude 回复。
+**功能描述**：用户在 Issue/MR 评论 `@claude <指令>`，Claude 自主判断是否修改代码并自动提交。
 
 **验收标准**：
 - [ ] 正确识别 `@claude` 指令（大小写不敏感）
 - [ ] 无指令时返回引导提示
 - [ ] 调用 Claude CLI 获取回答
 - [ ] 在原位置发表回复评论（以 `🤖 Claude 回复：` 开头）
+- [ ] Claude 自主决定是否修改代码
+- [ ] MR 中代码变更自动提交到源分支
+- [ ] Issue 中代码变更自动创建新分支提交 MR
+- [ ] 回复末尾包含 JSON 格式状态（code_changed, summary, commit_message, create_mr）
 - [ ] 端到端延迟 ≤ 15 秒（P95）
 
-**实现位置**：`internal/handler/comment.go`
+**实现位置**：`src/handlers/comment.ts`
 
 **依赖**：1.1, 1.2, 2.1
 
 **Claude Code 介入点**：
 - 代码解释、错误日志分析、单元测试生成、代码优化建议、CI/CD 配置问题回答
+- 自主决定是否修改代码
+
+---
+
+### 3.1.1 Issue 自动分析
+
+**功能描述**：Issue 创建时自动分析并生成设计文档。
+
+**验收标准**：
+- [ ] Issue `opened` 事件触发分析
+- [ ] 不响应 `reopen` 事件
+- [ ] 阅读代码库分析 Issue 关联性
+- [ ] 输出 Markdown 格式设计文档
+- [ ] 发布到 Issue 评论区
+
+**实现位置**：`src/handlers/analyze-issue.ts`
+
+**依赖**：1.1, 1.2, 2.1
 
 ---
 
@@ -196,6 +218,8 @@ Phase 2: Claude Code 集成基础
 
 Phase 3: 业务功能
 ├── 3.1 评论问答 @claude
+│   └── 依赖: 1.1, 1.2, 2.1
+├── 3.1.1 Issue 自动分析
 │   └── 依赖: 1.1, 1.2, 2.1
 ├── 3.2 自动代码审查
 │   └── 依赖: 1.1, 1.2, 2.1

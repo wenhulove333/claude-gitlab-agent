@@ -80,6 +80,7 @@ claude-gitlab-agent/
 │   │   ├── server.ts               # Webhook 服务器
 │   │   ├── verify.ts               # 签名验证
 │   │   ├── router.ts               # 事件路由
+│   │   ├── processor.ts            # 事件处理器（集成业务逻辑）
 │   │   └── types.ts                # Webhook 类型定义
 │   │
 │   ├── gitlab/                     # GitLab API 客户端
@@ -99,14 +100,13 @@ claude-gitlab-agent/
 │   │   ├── cleaner.ts               # 清理任务
 │   │   └── types.ts                 # 工作空间类型
 │   │
-│   ├── queue/                      # 任务队列
-│   │   ├── connection.ts            # Redis 连接
-│   │   ├── producer.ts              # 任务生产者
-│   │   ├── consumer.ts              # 任务消费者
-│   │   └── handlers/                # 任务处理器
-│   │       ├── comment.ts           # 评论问答处理
-│   │       ├── review.ts            # 自动审查处理
-│   │       └── create-mr.ts         # 创建 MR 处理
+│   ├── handlers/                   # 业务处理器
+│   │   ├── index.ts                # 导出入口
+│   │   ├── comment.ts              # 评论问答（支持自主代码修改）
+│   │   ├── analyze-issue.ts         # Issue 创建时自动分析
+│   │   ├── review.ts               # 自动代码审查
+│   │   ├── create-mr.ts            # 基于 Issue 创建 MR
+│   │   └── code-generation.ts      # 代码生成逻辑
 │   │
 │   ├── config/                     # 配置管理
 │   │   ├── index.ts                 # 配置加载入口
@@ -357,7 +357,8 @@ export const envSchema = z.object({
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
 
   // Claude CLI 配置
-  CLI_TIMEOUT_SECONDS: z.coerce.number().default(300),
+  CLI_TIMEOUT_SECONDS: z.coerce.number().default(120),
+  CLI_HEARTBEAT_INTERVAL: z.coerce.number().default(30),
   USE_DOCKER_ISOLATION: z.coerce.boolean().default(false),
 });
 

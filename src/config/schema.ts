@@ -27,6 +27,10 @@ export const envSchema = z.object({
   CLI_TIMEOUT_SECONDS: z.coerce.number().default(120),
   CLI_HEARTBEAT_INTERVAL: z.coerce.number().default(30),
   USE_DOCKER_ISOLATION: z.coerce.boolean().default(false),
+
+  // 机器人配置
+  BOT_NAME: z.string().default('小智'),
+  BOT_USERNAME: z.string().default('claude-bot'),
 });
 
 export type Env = z.infer<typeof envSchema>;
