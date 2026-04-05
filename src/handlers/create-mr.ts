@@ -2,13 +2,12 @@ import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
+import { buildCreateMRPrompt, parseCreateMRResponse, validateResponse, generateRetryPrompt } from '../claude/prompts/index.js';
 import type { IssueWebhookPayload } from '../webhook/types.js';
-import type { Issue, Note } from '../gitlab/types.js';
-import { getEnv } from '../config/index.js';
+import { getEnv, getProjectSettings } from '../config/index.js';
 import { AppError } from '../utils/errors.js';
+import simpleGit from 'simple-git';
 
-// Pattern to match /create-mr command
-const CREATE_MR_COMMAND_PATTERN = /^@claude\s*\/create-mr\s*/i;
 // Natural language patterns that indicate MR creation intent
 const CREATE_MR_NL_PATTERNS = [
   /创建\s*(一个)?\s*MR/i,
@@ -21,79 +20,21 @@ const CREATE_MR_NL_PATTERNS = [
 
 export function isCreateMRCommand(comment: string): boolean {
   const trimmed = comment.trim();
-  return CREATE_MR_COMMAND_PATTERN.test(trimmed) ||
+  const botName = getEnv().BOT_NAME;
+  const commandPattern = new RegExp(`^@${botName}\\s*\\/create-mr\\s*`, 'i');
+  return commandPattern.test(trimmed) ||
     CREATE_MR_NL_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
-function extractIssueContext(issue: Issue, notes: Note[]): string {
-  let context = `Issue #${issue.iid}: ${issue.title}\n\n`;
-  context += `描述：\n${issue.description || '(无)'}\n\n`;
-
-  if (notes.length > 0) {
-    context += `评论：\n`;
-    for (const note of notes) {
-      context += `- ${note.author.username}: ${note.body}\n`;
-    }
-  }
-
-  return context;
+function generateMRTitle(issueTitle: string, issueIid: number, botName: string): string {
+  return `[${botName}] ${issueTitle} #${issueIid}`;
 }
 
-function buildCreateMRPrompt(
-  defaultBranch: string,
-  issueContext: string
-): string {
-  return `你是一个资深开发者。你的任务是根据 Issue 内容实现代码变更并创建一个 Merge Request。
-
-当前工作目录是项目仓库，默认分支为 ${defaultBranch}。
-
-Issue 内容：
-${issueContext}
-
-请按以下步骤操作：
-1. 分析 Issue 需求，确定需要修改/新增的文件
-2. 使用 Edit/Write 工具修改代码
-3. 如果存在测试命令（如 npm test、make test），运行并确保通过；若失败，尝试修复
-4. 使用 Bash 工具执行：git add . && git commit -m "<提交信息> #${issueContext.match(/#(\d+)/)?.[1] || 'ISSUE'}"
-5. 创建新分支名格式：claude/issue-<issue编号>-<简短描述>
-6. 推送分支：git push origin HEAD:refs/heads/<分支名>
-
-重要约束：
-- 不要修改 .gitlab-ci.yml、Dockerfile、config/ 等关键文件
-- 确保代码变更与 Issue 描述一致
-- 提交信息要清晰描述变更内容
-- 测试必须通过才能提交
-
-完成后，请输出最终推送的分支名称，格式如下（只输出 JSON）：
-{"branch": "分支名", "commit_message": "提交信息"}`;
-}
-
-function parseCreateMRResponse(response: string): { branch: string; commitMessage: string } | null {
-  try {
-    const jsonMatch = response.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) return null;
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (!parsed.branch) return null;
-
-    return {
-      branch: parsed.branch,
-      commitMessage: parsed.commit_message || '',
-    };
-  } catch {
-    return null;
-  }
-}
-
-function generateMRTitle(issueTitle: string, issueIid: number): string {
-  return `[Claude] ${issueTitle} #${issueIid}`;
-}
-
-function generateMRDescription(issueIid: number, claudeSummary: string, testResults?: string): string {
-  let description = `此 MR 由 Claude 自动生成，基于 Issue #${issueIid}。\n\n`;
+function generateMRDescription(issueIid: number, botName: string, claudeSummary: string, testResults?: string): string {
+  let description = `此 MR 由 ${botName} 自动生成，基于 Issue #${issueIid}。\n\n`;
 
   if (claudeSummary) {
-    description += `**Claude 的变更说明**：\n${claudeSummary}\n\n`;
+    description += `**${botName} 的变更说明**：\n${claudeSummary}\n\n`;
   }
 
   if (testResults) {
@@ -105,6 +46,44 @@ function generateMRDescription(issueIid: number, claudeSummary: string, testResu
   return description;
 }
 
+/**
+ * 调用 Claude CLI 并验证响应
+ * 如果响应包含禁止的命令，会重新调用
+ */
+async function callClaudeWithValidation(
+  cli: ReturnType<typeof getClaudeCLI>,
+  prompt: string,
+  options: {
+    workingDirectory?: string;
+    timeout?: number;
+    maxRetries?: number;
+  } = {}
+): Promise<string> {
+  const { workingDirectory, timeout = 300, maxRetries = 2 } = options;
+  let currentPrompt = prompt;
+
+  for (let i = 0; i <= maxRetries; i++) {
+    const response = await cli.prompt(currentPrompt, {
+      workingDirectory,
+      timeout,
+    });
+
+    const validation = validateResponse(response);
+    if (validation.valid) {
+      return response;
+    }
+
+    // 验证失败，追加约束提醒重新生成
+    currentPrompt = generateRetryPrompt(prompt, validation.reason || '响应不符合要求');
+    logWarn(
+      { event: 'claude_response_invalid', retry: i + 1, reason: validation.reason },
+      `Claude response validation failed, retrying...`
+    );
+  }
+
+  throw new Error('Claude 响应验证失败，已达到最大重试次数');
+}
+
 export interface HandleCreateMROptions {
   /** Issue webhook payload */
   payload: IssueWebhookPayload;
@@ -112,8 +91,10 @@ export interface HandleCreateMROptions {
   projectSettings?: {
     createMREnabled?: boolean;
   };
-  /** Claude bot username */
+  /** Bot username */
   botUsername?: string;
+  /** Bot display name */
+  botName?: string;
 }
 
 /**
@@ -122,10 +103,13 @@ export interface HandleCreateMROptions {
 export async function handleCreateMR(
   options: HandleCreateMROptions
 ): Promise<void> {
-  const { payload, projectSettings = {} } = options;
+  const { payload, projectSettings = {}, botName } = options;
   const { iid, title, state } = payload.object_attributes;
   const project = payload.project;
   const author = payload.user;
+
+  // Get bot name from project settings if not provided
+  const effectiveBotName = botName || (await getProjectSettings(project.id)).botName;
 
   // Check if create MR is enabled
   if (projectSettings.createMREnabled === false) {
@@ -164,16 +148,27 @@ export async function handleCreateMR(
 
   try {
     // Post initial response
-    await gitlab.issues.createNote(project.id, iid, '🤖 Claude 正在处理，请稍候...（这可能需要几分钟）');
+    await gitlab.issues.createNote(project.id, iid, `🤖 ${effectiveBotName} 正在处理，请稍候...（这可能需要几分钟）`);
 
     // Get issue details and notes for context
     const issue = await gitlab.issues.get(project.id, iid);
     const notes = await gitlab.issues.getNotes(project.id, iid, { sort: 'asc' });
 
-    // Build context
-    const issueContext = extractIssueContext(issue, notes);
+    // Extract category from issue labels for branch naming
+    // Map label to branch prefix
+    const labelToPrefix: Record<string, string> = {
+      feature: 'feature',
+      improvement: 'improvement',
+      bug: 'fix',
+      wontfix: 'wontfix',
+      'needs-triage': 'task',
+    };
+    const issueLabels = issue.labels || [];
+    const categoryPrefix = issueLabels
+      .map((l: string) => labelToPrefix[l] || 'task')
+      .find((p: string) => p !== 'task') || 'task';
 
-    // Get or create workspace
+    // Build context
     const workspaceManager = new WorkspaceManager();
     const workspace = await workspaceManager.getOrCreate({
       type: 'issue',
@@ -191,17 +186,21 @@ export async function handleCreateMR(
 
     // Build prompt and call Claude CLI
     const prompt = buildCreateMRPrompt(
+      project.path_with_namespace,
       project.default_branch,
-      issueContext
+      issue.iid,
+      issue.title,
+      issue.description || '',
+      notes.map((n) => `- ${n.author.username}: ${n.body}`).join('\n')
     );
 
     const cli = getClaudeCLI();
 
     logDebug({ event: 'claude_cli_call', issue_iid: iid }, 'Calling Claude CLI for code generation');
 
-    const response = await cli.prompt(prompt, {
+    const response = await callClaudeWithValidation(cli, prompt, {
       workingDirectory: workspace.path,
-      timeout: 300, // 5 minutes for code generation
+      timeout: 300,
     });
 
     // Parse response
@@ -211,19 +210,43 @@ export async function handleCreateMR(
       throw new AppError('无法解析 Claude 的响应，请检查 Issue 描述是否清晰', 'PARSE_ERROR');
     }
 
+    // Check for uncommitted changes
+    const git = simpleGit(workspace.path);
+    const status = await git.status();
+    const hasChanges = !status.isClean();
+
+    if (!hasChanges) {
+      throw new AppError('Claude 没有修改任何代码，无法创建 MR', 'NO_CHANGES');
+    }
+
+    // Generate branch name using category prefix
+    const shortDesc = result.summary
+      .toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '-')
+      .replace(/-+/g, '-')
+      .slice(0, 20);
+    const branchName = `${categoryPrefix}/issue-${iid}-${shortDesc}`;
+
+    // Commit changes
+    await git.add('.');
+    await git.commit(result.commitMessage || `Update code #${iid}`);
+
+    // Push to create the branch
+    await git.push('origin', `HEAD:refs/heads/${branchName}`, ['--set-upstream']);
+
     logInfo(
-      { event: 'branch_created', issue_iid: iid, branch: result.branch },
-      `Branch ${result.branch} created and pushed`
+      { event: 'branch_created', issue_iid: iid, branch: branchName },
+      `Branch ${branchName} created and pushed`
     );
 
     // Create MR
-    const mrTitle = generateMRTitle(issue.title, issue.iid);
-    const mrDescription = generateMRDescription(issue.iid, result.commitMessage);
+    const mrTitle = generateMRTitle(issue.title, issue.iid, effectiveBotName);
+    const mrDescription = generateMRDescription(issue.iid, effectiveBotName, result.summary);
 
     const mr = await gitlab.client.post<{ web_url: string }>(
       `/projects/${project.id}/merge_requests`,
       {
-        source_branch: result.branch,
+        source_branch: branchName,
         target_branch: project.default_branch,
         title: mrTitle,
         description: mrDescription,
@@ -236,7 +259,7 @@ export async function handleCreateMR(
     await gitlab.issues.createNote(
       project.id,
       iid,
-      `🤖 Claude 已创建 MR！\n\n**MR 链接**：${mrLink}\n\n请审阅后合并。`
+      `🤖 ${effectiveBotName} 已创建 MR！\n\n**MR 链接**：${mrLink}\n\n请审阅后合并。`
     );
 
     logInfo(
@@ -260,7 +283,7 @@ export async function handleCreateMR(
         userMessage = `创建 MR 失败：Issue 描述不够清晰，请补充具体修改点后再试。`;
       }
 
-      await gitlab.issues.createNote(project.id, iid, `🤖 Claude：${userMessage}`);
+      await gitlab.issues.createNote(project.id, iid, `🤖 ${effectiveBotName}：${userMessage}`);
     } catch (postError) {
       logError(
         { event: 'create_mr_error_post_failed', issue_iid: iid },

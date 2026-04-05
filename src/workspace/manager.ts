@@ -124,9 +124,14 @@ export class WorkspaceManager {
     try {
       await git.clone(repoUrl, path, ['--depth=1', '--branch', defaultBranch]);
     } catch (error) {
-      // Clean up on failure
-      await this.delete(projectName, type, iid).catch(() => {});
-      throw new WorkspaceError(`Failed to clone repository: ${error}`);
+      // If clone fails due to branch issues, try cloning without specifying branch
+      logWarn({ event: 'workspace_clone_with_branch_failed', workspaceId, defaultBranch, error: String(error) }, 'Clone with branch failed, trying without branch');
+      try {
+        await git.clone(repoUrl, path, ['--depth=1']);
+      } catch (retryError) {
+        // Keep the directory even if clone fails (empty repo case)
+        logWarn({ event: 'workspace_clone_failed', workspaceId, error: String(retryError) }, 'Clone failed, workspace directory created but repo not cloned');
+      }
     }
 
     const info: WorkspaceInfo = {

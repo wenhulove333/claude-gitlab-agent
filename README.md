@@ -7,14 +7,21 @@
 ### 1. @claude 智能问答
 
 - 在 Issue 或 MR 评论中 `@claude <指令>` 触发
-- 支持代码解释、错误分析、单元测试生成、代码优化建议
+- Claude 自主判断是否需要修改代码，如需修改则自动提交到 MR 源分支或创建新分支提交 MR
+- 支持代码解释、错误分析、代码优化、Review 请求等任意问答场景
 
 ### 2. 自动代码审查
 
 - MR 创建或重新打开时自动触发
 - 输出结构化审查意见（🔴 阻塞 / 🟡 建议 / 🟢 优化）
 
-### 3. 基于 Issue 创建 MR
+### 3. Issue 自动分析
+
+- Issue 创建时自动触发
+- Claude 阅读代码库并分析 Issue 关联性
+- 生成 Markdown 格式设计文档发布到 Issue 评论
+
+### 4. 基于 Issue 创建 MR
 
 - `@claude /create-mr` 或等效自然语言触发
 - Claude 分析 Issue、生成代码、创建分支和 MR
@@ -130,7 +137,8 @@ src/
 ├── config/          # 配置管理
 ├── gitlab/         # GitLab API 客户端
 ├── handlers/       # 业务处理器
-│   ├── comment.ts  # 评论问答
+│   ├── comment.ts  # 评论问答（支持自主代码修改）
+│   ├── analyze-issue.ts # Issue 创建时自动分析生成设计文档
 │   ├── review.ts   # 自动审查
 │   └── create-mr.ts # 创建 MR
 ├── webhook/        # Webhook 服务器
