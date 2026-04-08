@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js';
-import { createGitLabClient } from '../gitlab/index.js';
+import { createGitLabClient, extractIssueReferences } from '../gitlab/index.js';
 import { getEnv } from '../config/index.js';
 import {
   isClaudeCommand,
@@ -17,6 +17,10 @@ import type {
   NoteWebhookPayload,
 } from './types.js';
 import type { WebhookHandler } from './router.js';
+
+const MR_CREATED_LABEL = 'mr-created';
+const TO_BE_VERIFIED_LABEL = 'to-be-verified';
+const PASS_LABEL = 'pass';
 
 /**
  * Create webhook handlers with business logic
@@ -104,6 +108,35 @@ export function createWebhookHandlers(): WebhookHandler {
           `Issue closed: #${iid}`
         );
 
+        // Replace to-be-verified with pass label when issue is closed
+        try {
+          const env = getEnv();
+          const gitlab = createGitLabClient({
+            baseUrl: env.GITLAB_URL,
+            token: env.GITLAB_ACCESS_TOKEN,
+          });
+
+          // Get current issue labels
+          const issue = await gitlab.issues.get(project.id, iid);
+          const currentLabels = issue.labels || [];
+
+          // Check if issue has to-be-verified label
+          if (currentLabels.includes(TO_BE_VERIFIED_LABEL)) {
+            // Remove to-be-verified and add pass
+            await gitlab.issues.removeLabels(project.id, iid, [TO_BE_VERIFIED_LABEL]);
+            await gitlab.issues.addLabels(project.id, iid, [PASS_LABEL]);
+            logger.info(
+              { event: 'issue_labels_updated', issue_iid: iid, removed: TO_BE_VERIFIED_LABEL, added: PASS_LABEL },
+              `Replaced '${TO_BE_VERIFIED_LABEL}' with '${PASS_LABEL}' on Issue #${iid}`
+            );
+          }
+        } catch (labelError) {
+          logger.warn(
+            { event: 'issue_labels_update_failed', issue_iid: iid, error: labelError },
+            `Failed to update labels on Issue #${iid}`
+          );
+        }
+
         // Auto-delete workspace when issue is closed
         try {
           await workspaceManager.delete(project.name, 'issue', iid);
@@ -144,6 +177,48 @@ export function createWebhookHandlers(): WebhookHandler {
           },
           `MR ${action}: #${iid}`
         );
+
+        // Add mr-created label to referenced issues when MR is opened
+        if (action === 'open') {
+          try {
+            const env = getEnv();
+            const gitlab = createGitLabClient({
+              baseUrl: env.GITLAB_URL,
+              token: env.GITLAB_ACCESS_TOKEN,
+            });
+
+            // Get full MR details to parse issue references from description
+            const mr = await gitlab.mergeRequests.get(project.id, iid);
+            const referencedIssueIids = extractIssueReferences(mr.description || '');
+
+            if (referencedIssueIids.length > 0) {
+              logger.info(
+                { event: 'mr_issue_references_found', mr_iid: iid, issue_iids: referencedIssueIids },
+                `Found ${referencedIssueIids.length} issue references in MR #${iid}`
+              );
+
+              for (const issueIid of referencedIssueIids) {
+                try {
+                  await gitlab.issues.addLabels(project.id, issueIid, [MR_CREATED_LABEL]);
+                  logger.info(
+                    { event: 'issue_label_added', issue_iid: issueIid, mr_iid: iid, label: MR_CREATED_LABEL },
+                    `Added label '${MR_CREATED_LABEL}' to Issue #${issueIid}`
+                  );
+                } catch (labelError) {
+                  logger.warn(
+                    { event: 'issue_label_add_failed', issue_iid: issueIid, mr_iid: iid, error: labelError },
+                    `Failed to add label to Issue #${issueIid}`
+                  );
+                }
+              }
+            }
+          } catch (error) {
+            logger.warn(
+              { event: 'mr_issue_reference_processing_failed', mr_iid: iid, error },
+              `Failed to process issue references for MR #${iid}`
+            );
+          }
+        }
 
         // Auto-create workspace for new/reopened MRs
         try {
@@ -196,23 +271,85 @@ export function createWebhookHandlers(): WebhookHandler {
           maxFiles: 20,
           projectSettings,
         });
-      } else if (action === 'merge' || action === 'close') {
+      } else if (action === 'merge') {
         logger.info(
           {
-            event: 'mr_closed_merged',
-            action,
+            event: 'mr_merged',
             project_id: project.id,
             mr_iid: iid,
           },
-          `MR ${action}: #${iid}`
+          `MR merged: #${iid}`
         );
 
-        // Auto-delete workspace when MR is merged or closed
+        // Add to-be-verified label to referenced issues when MR is merged
+        try {
+          const env = getEnv();
+          const gitlab = createGitLabClient({
+            baseUrl: env.GITLAB_URL,
+            token: env.GITLAB_ACCESS_TOKEN,
+          });
+
+          // Get full MR details to parse issue references from description
+          const mr = await gitlab.mergeRequests.get(project.id, iid);
+          const referencedIssueIids = extractIssueReferences(mr.description || '');
+
+          if (referencedIssueIids.length > 0) {
+            logger.info(
+              { event: 'mr_merged_issue_references', mr_iid: iid, issue_iids: referencedIssueIids },
+              `Found ${referencedIssueIids.length} issue references in merged MR #${iid}`
+            );
+
+            for (const issueIid of referencedIssueIids) {
+              try {
+                await gitlab.issues.addLabels(project.id, issueIid, [TO_BE_VERIFIED_LABEL]);
+                logger.info(
+                  { event: 'issue_label_added', issue_iid: issueIid, mr_iid: iid, label: TO_BE_VERIFIED_LABEL },
+                  `Added label '${TO_BE_VERIFIED_LABEL}' to Issue #${issueIid} after MR merge`
+                );
+              } catch (labelError) {
+                logger.warn(
+                  { event: 'issue_label_add_failed', issue_iid: issueIid, mr_iid: iid, error: labelError },
+                  `Failed to add label to Issue #${issueIid}`
+                );
+              }
+            }
+          }
+        } catch (error) {
+          logger.warn(
+            { event: 'mr_merged_issue_processing_failed', mr_iid: iid, error },
+            `Failed to process issue references for merged MR #${iid}`
+          );
+        }
+
+        // Auto-delete workspace when MR is merged
         try {
           await workspaceManager.delete(project.name, 'mr', iid);
           logger.info(
             { event: 'workspace_auto_deleted', mr_iid: iid },
-            `Workspace auto-deleted for MR #${iid}`
+            `Workspace auto-deleted for merged MR #${iid}`
+          );
+        } catch (error) {
+          logger.warn(
+            { event: 'workspace_auto_delete_failed', mr_iid: iid, error },
+            `Failed to auto-delete workspace for MR #${iid}`
+          );
+        }
+      } else if (action === 'close') {
+        logger.info(
+          {
+            event: 'mr_closed',
+            project_id: project.id,
+            mr_iid: iid,
+          },
+          `MR closed: #${iid}`
+        );
+
+        // Auto-delete workspace when MR is closed without merging
+        try {
+          await workspaceManager.delete(project.name, 'mr', iid);
+          logger.info(
+            { event: 'workspace_auto_deleted', mr_iid: iid },
+            `Workspace auto-deleted for closed MR #${iid}`
           );
         } catch (error) {
           logger.warn(

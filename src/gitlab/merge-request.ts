@@ -1,6 +1,33 @@
 import { GitLabClient } from './client.js';
 import type { MergeRequest, MRChanges, Note, Diff } from './types.js';
 
+/**
+ * Patterns to match issue references in MR descriptions
+ * Matches: closes #123, fix #123, fixes #123, closes #123, close #123, resolved #123, resolves #123
+ */
+const ISSUE_REFERENCE_PATTERNS = [
+  /(?:closes?|fix(?:es)?|close|resolve[sd]?)\s*#(\d+)/gi,
+];
+
+/**
+ * Extract issue IID references from MR description
+ */
+export function extractIssueReferences(description: string): number[] {
+  const iids = new Set<number>();
+
+  for (const pattern of ISSUE_REFERENCE_PATTERNS) {
+    let match;
+    while ((match = pattern.exec(description)) !== null) {
+      const iid = parseInt(match[1], 10);
+      if (!isNaN(iid)) {
+        iids.add(iid);
+      }
+    }
+  }
+
+  return Array.from(iids);
+}
+
 export interface GetMRChangesOptions {
   includeDiff?: boolean;
 }

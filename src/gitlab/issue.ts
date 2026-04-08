@@ -29,4 +29,22 @@ export class IssueAPI {
   async assignees(projectId: number, issueIid: number): Promise<User[]> {
     return this.client.get<User[]>(`/projects/${projectId}/issues/${issueIid}/assignees`);
   }
+
+  /**
+   * Add labels to an issue
+   */
+  async addLabels(projectId: number, issueIid: number, labels: string[]): Promise<Issue> {
+    return this.client.put<Issue>(`/projects/${projectId}/issues/${issueIid}`, {
+      add_labels: labels.join(','),
+    });
+  }
+
+  /**
+   * Remove labels from an issue
+   */
+  async removeLabels(projectId: number, issueIid: number, labels: string[]): Promise<Issue> {
+    return this.client.put<Issue>(`/projects/${projectId}/issues/${issueIid}`, {
+      remove_labels: labels.join(','),
+    });
+  }
 }

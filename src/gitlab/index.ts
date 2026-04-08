@@ -6,7 +6,7 @@ import { ProjectAPI } from './project.js';
 
 export { GitLabClient, type GitLabClientConfig } from './client.js';
 export { IssueAPI } from './issue.js';
-export { MergeRequestAPI } from './merge-request.js';
+export { MergeRequestAPI, extractIssueReferences } from './merge-request.js';
 export { NoteAPI } from './note.js';
 export { ProjectAPI } from './project.js';
 export * from './types.js';

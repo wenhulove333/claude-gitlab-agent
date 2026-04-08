@@ -262,6 +262,20 @@ export async function handleCreateMR(
       `🤖 ${effectiveBotName} 已创建 MR！\n\n**MR 链接**：${mrLink}\n\n请审阅后合并。`
     );
 
+    // Add mr-created label to the issue
+    try {
+      await gitlab.issues.addLabels(project.id, iid, ['mr-created']);
+      logInfo(
+        { event: 'issue_label_added', issue_iid: iid, label: 'mr-created' },
+        `Added label 'mr-created' to Issue #${iid}`
+      );
+    } catch (labelError) {
+      logWarn(
+        { event: 'issue_label_add_failed', issue_iid: iid, error: labelError },
+        `Failed to add label 'mr-created' to Issue #${iid}`
+      );
+    }
+
     logInfo(
       { event: 'mr_created', issue_iid: iid, mr_url: mrLink },
       'MR created successfully'
