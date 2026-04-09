@@ -122,6 +122,19 @@ export async function analyzeIssue(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logError({ event: 'analyze_issue_failed', issue_iid: iid, error: errorMessage }, `Issue analysis failed: ${errorMessage}`);
+
+    // 回复错误到评论
+    try {
+      const errorResponse = `🤖 ${getEnv().BOT_NAME} 分析失败：
+
+错误：${errorMessage}
+
+调用大模型失败，请重新创建新的议题。`;
+      await gitlab.issues.createNote(project.id, iid, errorResponse);
+    } catch (noteError) {
+      logError({ event: 'analyze_issue_error_reply_failed', issue_iid: iid, error: String(noteError) }, 'Failed to post error reply to issue');
+    }
+
     return { success: false, error: errorMessage };
   }
 }

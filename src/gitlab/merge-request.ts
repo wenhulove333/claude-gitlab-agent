@@ -1,12 +1,16 @@
 import { GitLabClient } from './client.js';
 import type { MergeRequest, MRChanges, Note, Diff } from './types.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Patterns to match issue references in MR descriptions
- * Matches: closes #123, fix #123, fixes #123, closes #123, close #123, resolved #123, resolves #123
+ * Matches:
+ *   - GitLab keywords: closes #123, fix #123, fixes #123, close #123, resolved #123, resolves #123
+ *   - Chinese patterns: 基于 Issue #123, Issue #123
  */
 const ISSUE_REFERENCE_PATTERNS = [
   /(?:closes?|fix(?:es)?|close|resolve[sd]?)\s*#(\d+)/gi,
+  /(?:基于\s*)?[Ii]ssue\s*#(\d+)/g,
 ];
 
 /**
@@ -15,14 +19,35 @@ const ISSUE_REFERENCE_PATTERNS = [
 export function extractIssueReferences(description: string): number[] {
   const iids = new Set<number>();
 
+  if (!description) {
+    logger.debug({ event: 'extract_issue_references', status: 'empty_description' }, 'MR description is empty');
+    return [];
+  }
+
   for (const pattern of ISSUE_REFERENCE_PATTERNS) {
     let match;
     while ((match = pattern.exec(description)) !== null) {
       const iid = parseInt(match[1], 10);
       if (!isNaN(iid)) {
         iids.add(iid);
+        logger.info(
+          { event: 'issue_reference_matched', pattern: pattern.source, matched: match[0], iid },
+          `Matched issue reference: ${match[0]}`
+        );
       }
     }
+  }
+
+  if (iids.size > 0) {
+    logger.info(
+      { event: 'extract_issue_references', status: 'success', count: iids.size, iids: Array.from(iids) },
+      `Extracted ${iids.size} issue references from MR description`
+    );
+  } else {
+    logger.warn(
+      { event: 'extract_issue_references', status: 'no_match', description: description.slice(0, 100) },
+      'No issue references found in MR description'
+    );
   }
 
   return Array.from(iids);

@@ -344,6 +344,46 @@ export function createWebhookHandlers(): WebhookHandler {
           `MR closed: #${iid}`
         );
 
+        // Add to-be-verified label to referenced issues when MR is closed
+        try {
+          const env = getEnv();
+          const gitlab = createGitLabClient({
+            baseUrl: env.GITLAB_URL,
+            token: env.GITLAB_ACCESS_TOKEN,
+          });
+
+          // Get full MR details to parse issue references from description
+          const mr = await gitlab.mergeRequests.get(project.id, iid);
+          const referencedIssueIids = extractIssueReferences(mr.description || '');
+
+          if (referencedIssueIids.length > 0) {
+            logger.info(
+              { event: 'mr_closed_issue_references', mr_iid: iid, issue_iids: referencedIssueIids },
+              `Found ${referencedIssueIids.length} issue references in closed MR #${iid}`
+            );
+
+            for (const issueIid of referencedIssueIids) {
+              try {
+                await gitlab.issues.addLabels(project.id, issueIid, [TO_BE_VERIFIED_LABEL]);
+                logger.info(
+                  { event: 'issue_label_added', issue_iid: issueIid, mr_iid: iid, label: TO_BE_VERIFIED_LABEL },
+                  `Added label '${TO_BE_VERIFIED_LABEL}' to Issue #${issueIid} after MR close`
+                );
+              } catch (labelError) {
+                logger.warn(
+                  { event: 'issue_label_add_failed', issue_iid: issueIid, mr_iid: iid, error: labelError },
+                  `Failed to add label to Issue #${issueIid}`
+                );
+              }
+            }
+          }
+        } catch (error) {
+          logger.warn(
+            { event: 'mr_closed_issue_processing_failed', mr_iid: iid, error },
+            `Failed to process issue references for closed MR #${iid}`
+          );
+        }
+
         // Auto-delete workspace when MR is closed without merging
         try {
           await workspaceManager.delete(project.name, 'mr', iid);
