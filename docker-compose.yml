@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Claude GitLab Agent application service
   app:
     build:
       context: .
@@ -31,6 +32,7 @@ services:
       retries: 3
       start_period: 10s
 
+  # Redis for job queue and caching
   redis:
     image: docker.cnb.cool/ssstudio.ss/culture-tourism/wenzhou-openeuler-env-setup/redis:latest
     container_name: claude-gitlab-redis
@@ -45,6 +47,7 @@ services:
       timeout: 5s
       retries: 3
 
+# Persistent volumes for workspace data and Redis
 volumes:
   workspace_data:
   redis_data:

@@ -1,5 +1,11 @@
 # Claude GitLab Agent
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](package.json)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)](src)
+
+[English](README_EN.md) | [中文](README.md)
+
 深度集成于 GitLab 的 AI 助手，通过自然语言交互完成代码审查、问答和 MR 创建。
 
 ## 功能特性
@@ -181,7 +187,14 @@ npm test
 npm run build
 ```
 
+## 贡献
+
+欢迎贡献代码！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解如何参与项目。
+
+## 安全问题
+
+如果您发现安全漏洞，请参阅 [SECURITY.md](SECURITY.md) 了解如何报告。
+
 ## License
 
-MIT
-
+MIT License - 参阅 [LICENSE](LICENSE) 了解更多详情。

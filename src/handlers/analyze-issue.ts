@@ -19,6 +19,18 @@ export interface AnalyzeIssueOptions {
   workspacePath?: string;
 }
 
+/**
+ * Analyzes a newly created Issue using Claude
+ *
+ * This function:
+ * 1. Sets up a workspace with the project repository
+ * 2. Sends the issue to Claude for analysis
+ * 3. Posts the analysis result as a comment on the issue
+ * 4. Categorizes and labels the issue based on the analysis
+ *
+ * @param options - Analysis options including webhook payload and optional workspace path
+ * @returns Result object with success status and category
+ */
 export async function analyzeIssue(
   options: AnalyzeIssueOptions
 ): Promise<AnalyzeIssueResult> {

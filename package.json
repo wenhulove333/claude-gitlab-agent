@@ -2,7 +2,23 @@
   "name": "claude-gitlab-agent",
   "version": "0.1.0",
   "type": "module",
-  "description": "Claude GitLab Intelligent Assistant",
+  "description": "AI-powered GitLab assistant for code review, Q&A, and MR creation using Claude",
+  "license": "MIT",
+  "author": "Claude GitLab Agent Contributors",
+  "homepage": "https://github.com/claude-agent/claude-gitlab-agent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/claude-agent/claude-gitlab-agent.git"
+  },
+  "keywords": [
+    "gitlab",
+    "claude",
+    "ai",
+    "code-review",
+    "merge-request",
+    "assistant",
+    "anthropic"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

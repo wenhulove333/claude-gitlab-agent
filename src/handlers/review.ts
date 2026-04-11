@@ -8,6 +8,8 @@ import { getEnv, getProjectSettings } from '../config/index.js';
 
 /**
  * Format diff for Claude review
+ * @param diffs - Array of file diffs from MR
+ * @returns Formatted diff string for review prompt
  */
 function formatDiffForReview(diffs: Diff[]): string {
   let output = '';
@@ -26,7 +28,9 @@ function formatDiffForReview(diffs: Diff[]): string {
 }
 
 /**
- * Format "no issues" comment
+ * Format "no issues" comment when review passes with no problems found
+ * @param botName - Display name of the bot
+ * @returns Formatted comment string
  */
 function formatNoIssuesComment(botName: string): string {
   return `✅ **${botName} 自动代码审查**\n\n未发现明显问题，代码质量良好。`;
