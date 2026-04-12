@@ -81,7 +81,7 @@ export function createWebhookHandlers(): WebhookHandler {
             await gitlab.issues.createNote(
               project.id,
               iid,
-              `🤖 ${getEnv().BOT_NAME} is analyzing the issue, please wait...`
+              `🤖 ${getEnv().BOT_NAME} 正在分析 Issue，请稍候...`
             );
 
             // Analyze issue in background, passing workspace path if available
