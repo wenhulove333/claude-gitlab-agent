@@ -33,7 +33,7 @@ function formatDiffForReview(diffs: Diff[]): string {
  * @returns Formatted comment string
  */
 function formatNoIssuesComment(botName: string): string {
-  return `✅ **${botName} Auto Code Review**\n\nNo obvious issues found, code quality looks good.`;
+  return `✅ **${botName} 自动代码审查**\n\n未发现明显问题，代码质量看起来不错。`;
 }
 
 export interface HandleReviewOptions {
@@ -124,7 +124,7 @@ export async function handleAutoReview(
 
     // Check file count limit
     if (diffs.length > maxFiles) {
-      const comment = `🤖 **${effectiveBotName} Auto Code Review**\n\nThis MR has too many changed files (${diffs.length}), exceeding the auto review limit (${maxFiles}). Please review manually or split into smaller MRs.`;
+      const comment = `🤖 **${effectiveBotName} 自动代码审查**\n\n此 MR 变更文件过多（${diffs.length}），超出了自动审查的限制（${maxFiles}）。请手动审查或拆分成更小的 MR。`;
       await gitlab.mergeRequests.createNote(project.id, iid, comment);
       logInfo(
         { event: 'mr_too_large', mr_iid: iid, file_count: diffs.length },
@@ -156,7 +156,7 @@ export async function handleAutoReview(
       await gitlab.mergeRequests.createNote(
         project.id,
         iid,
-        `🤖 ${effectiveBotName} is reviewing code, please wait...`
+        `🤖 ${effectiveBotName} 正在审查代码，请稍候...`
       );
     } catch (noteError) {
       logWarn({ event: 'review_start_note_failed', mr_iid: iid }, 'Failed to post review start note');
@@ -188,7 +188,7 @@ export async function handleAutoReview(
       await gitlab.mergeRequests.createNote(
         project.id,
         iid,
-        `🤖 **${effectiveBotName} Auto Code Review**\n\n${trimmedResponse}`
+        `🤖 **${effectiveBotName} 自动代码审查**\n\n${trimmedResponse}`
       );
     }
 
@@ -204,7 +204,7 @@ export async function handleAutoReview(
     );
 
     try {
-      const errorComment = `🤖 **${effectiveBotName} Auto Code Review**\n\nReview failed: ${errorMessage}`;
+      const errorComment = `🤖 **${effectiveBotName} 自动代码审查**\n\n审查失败：${errorMessage}`;
       await gitlab.mergeRequests.createNote(project.id, iid, errorComment);
     } catch (postError) {
       logError(

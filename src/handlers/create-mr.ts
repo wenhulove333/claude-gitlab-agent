@@ -148,7 +148,7 @@ export async function handleCreateMR(
 
   try {
     // Post initial response
-    await gitlab.issues.createNote(project.id, iid, `🤖 ${effectiveBotName} is processing, please wait... (this may take a few minutes)`);
+    await gitlab.issues.createNote(project.id, iid, `🤖 ${effectiveBotName} 正在处理中，请稍候...（可能需要几分钟）`);
 
     // Get issue details and notes for context
     const issue = await gitlab.issues.get(project.id, iid);
@@ -259,7 +259,7 @@ export async function handleCreateMR(
     await gitlab.issues.createNote(
       project.id,
       iid,
-      `🤖 ${effectiveBotName} has created an MR!\n\n**MR Link**: ${mrLink}\n\nPlease review and merge.`
+      `🤖 ${effectiveBotName} 已创建 MR！\n\n**MR 链接**：${mrLink}\n\n请审查并合并。`
     );
 
     // Add mr-created label to the issue
@@ -284,7 +284,7 @@ export async function handleCreateMR(
     const errorMessage = error instanceof Error ? error.message : String(error);
     logError(
       { event: 'create_mr_failed', issue_iid: iid, error: errorMessage },
-      `Create MR failed: ${errorMessage}`
+      `创建 MR 失败：${errorMessage}`
     );
 
     // Post error message

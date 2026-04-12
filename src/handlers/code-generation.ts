@@ -300,7 +300,7 @@ ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
     await gitlab.issues.createNote(
       project.id,
       iid,
-      `🤖 Claude has completed code implementation and created an MR!\n\n**MR Link**: ${mr.web_url}\n\n**Changes**: ${parsed.summary}`
+      `🤖 Claude 已完成代码实现并创建了 MR！\n\n**MR 链接**：${mr.web_url}\n\n**变更**：${parsed.summary}`
     );
 
     return {

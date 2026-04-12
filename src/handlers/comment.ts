@@ -259,7 +259,7 @@ export async function handleClaudeComment(
       await gitlab.notes.create(
         project.id,
         noteableIid,
-        `🤖 ${botName}: Workspace preparation failed: ${errorMessage}\n\nPlease try again later.`,
+        `🤖 ${botName}：工作空间准备失败：${errorMessage}\n\n请稍后重试。`,
         noteableType
       );
     } catch {}
@@ -268,7 +268,7 @@ export async function handleClaudeComment(
 
   // Post initial "processing" comment
   try {
-    await gitlab.notes.create(project.id, noteableIid, `🤖 ${botName} is processing, please wait...`, noteableType);
+    await gitlab.notes.create(project.id, noteableIid, `🤖 ${botName} 正在处理中，请稍候...`, noteableType);
   } catch (postError) {
     const postErrorMsg = postError instanceof Error ? postError.message : String(postError);
     logWarn({ event: 'initial_comment_post_failed', error: postErrorMsg }, 'Failed to post initial processing comment');
@@ -361,20 +361,20 @@ export async function handleClaudeComment(
       // Post response
       let postedResponse = '';
       if (codeChanged) {
-        postedResponse = `🤖 ${botName}:
+        postedResponse = `🤖 ${botName}：
 
-${responseText || 'Code has been modified and committed.'}
+${responseText || '代码已修改并提交。'}
 
 ---
 
-**Code Changes**: ${result?.summary || 'Code changes'}
+**代码变更**：${result?.summary || '代码变更'}
 
-**Commit Message**: ${result?.commit_message || 'Update code'}
+**提交信息**：${result?.commit_message || '更新代码'}
 
-**Branch**: ${sourceBranch}`;
+**分支**：${sourceBranch}`;
       } else {
-        const responseContent = responseText || 'Received your request.';
-        postedResponse = `🤖 ${botName}:
+        const responseContent = responseText || '已收到您的请求。';
+        postedResponse = `🤖 ${botName}：
 
 ${responseContent}`;
       }
@@ -424,20 +424,20 @@ ${responseContent}`;
 
       const { handleCreateMR } = await import('./create-mr.js');
 
-      const formattedResponse = `🤖 ${botName}:
+      const formattedResponse = `🤖 ${botName}：
 
 ${responseText}
 
 ---
 
-**Code Changes**: ${codeChangeInfo?.summary || 'Code changes'}
+**代码变更**：${codeChangeInfo?.summary || '代码变更'}
 
-**Changed Files**:
+**变更文件**：
 ${(codeChangeInfo?.changedFiles || status.modified || []).map((f: string) => `- ${f}`).join('\n')}
 
-**Commit Message**: ${codeChangeInfo?.commitMessage || 'Update code'}
+**提交信息**：${codeChangeInfo?.commitMessage || '更新代码'}
 
-Creating MR...`;
+正在创建 MR...`;
 
       await gitlab.notes.create(project.id, noteableIid, formattedResponse, noteableType);
 
@@ -467,8 +467,8 @@ Creating MR...`;
       }
     } else {
       // No changes - post response
-      let responseContent = responseText.trim() || 'Received your request.';
-      const formattedResponse = `🤖 ${botName}:
+      let responseContent = responseText.trim() || '已收到您的请求。';
+      const formattedResponse = `🤖 ${botName}：
 
 ${responseContent}`;
 
@@ -488,11 +488,11 @@ ${responseContent}`;
 
     // Post error message
     try {
-      const errorResponse = `🤖 ${botName}:
+      const errorResponse = `🤖 ${botName}：
 
-Processing failed: ${errorMessage}
+处理失败：${errorMessage}
 
-Please try again later.`;
+请稍后重试。`;
 
       await gitlab.notes.create(
         project.id,
