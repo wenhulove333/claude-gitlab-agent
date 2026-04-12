@@ -321,7 +321,7 @@ ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
       await gitlab.issues.createNote(
         project.id,
         iid,
-        `🤖 Claude：代码生成失败\n\n${errorMessage}`
+        `🤖 Claude: Code generation failed\n\n${errorMessage}`
       );
     } catch {
       // ignore

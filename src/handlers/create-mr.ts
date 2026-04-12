@@ -289,12 +289,12 @@ export async function handleCreateMR(
 
     // Post error message
     try {
-      let userMessage = `创建 MR 失败：${errorMessage}`;
+      let userMessage = `Failed to create MR: ${errorMessage}`;
 
       if (errorMessage.includes('timeout') || errorMessage.includes('超时')) {
-        userMessage = `创建 MR 超时：任务执行时间过长，请简化需求或手动实现。`;
+        userMessage = `Create MR timed out: Task execution took too long. Please simplify the requirements or implement manually.`;
       } else if (errorMessage.includes('无法解析') || errorMessage.includes('parse')) {
-        userMessage = `创建 MR 失败：Issue 描述不够清晰，请补充更多细节后重试。`;
+        userMessage = `Failed to create MR: Issue description is not clear enough. Please add more specific details and try again.`;
       }
 
       await gitlab.issues.createNote(project.id, iid, `🤖 ${effectiveBotName}：${userMessage}`);
