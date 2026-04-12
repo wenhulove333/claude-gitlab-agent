@@ -313,7 +313,7 @@ ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
     const errorMessage = error instanceof Error ? error.message : String(error);
     logError(
       { event: 'code_generation_failed', issue_iid: iid, error: errorMessage },
-      `Code generation failed: ${errorMessage}`
+      `代码生成失败：${errorMessage}`
     );
 
     // Try to post error comment
@@ -321,7 +321,7 @@ ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
       await gitlab.issues.createNote(
         project.id,
         iid,
-        `🤖 Claude: Code generation failed\n\n${errorMessage}`
+        `🤖 Claude：代码生成失败\n\n${errorMessage}`
       );
     } catch {
       // ignore

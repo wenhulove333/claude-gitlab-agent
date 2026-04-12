@@ -102,7 +102,7 @@ export async function analyzeIssue(
 
     // Remove [ANALYSIS] block, keep only the design doc part for posting
     const designDocContent = response.replace(/\[ANALYSIS\][\s\S]*?\[\/ANALYSIS\]\s*/i, '');
-    const designDoc = `## 📋 Issue Analysis Report\n\n${designDocContent.trim()}`;
+    const designDoc = `## 📋 Issue 分析报告\n\n${designDocContent.trim()}`;
 
     await gitlab.issues.createNote(project.id, iid, designDoc);
 
@@ -137,11 +137,11 @@ export async function analyzeIssue(
 
     // Reply error to comment
     try {
-      const errorResponse = `🤖 ${getEnv().BOT_NAME} Analysis Failed:
+      const errorResponse = `🤖 ${getEnv().BOT_NAME} 分析失败：
 
-Error: ${errorMessage}
+错误：${errorMessage}
 
-Failed to invoke the AI model. Please create a new issue and try again.`;
+调用大模型失败，请重新创建新的议题。`;
       await gitlab.issues.createNote(project.id, iid, errorResponse);
     } catch (noteError) {
       logError({ event: 'analyze_issue_error_reply_failed', issue_iid: iid, error: String(noteError) }, 'Failed to post error reply to issue');
