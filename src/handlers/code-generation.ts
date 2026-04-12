@@ -269,10 +269,10 @@ export async function generateCodeAndCreateMR(
     );
 
     // Create MR via GitLab API
-    const mrTitle = `[Claude] ${issue.title} #${issue.iid}`;
-    const mrDescription = `此 MR 由 Claude 基于 Issue #${issue.iid} 自动创建。
+    const mrTitle = `[${env.BOT_NAME}] ${issue.title} #${issue.iid}`;
+    const mrDescription = `此 MR 由 ${env.BOT_NAME} 基于 Issue #${issue.iid} 自动创建。
 
-**Claude 的变更**:
+**${env.BOT_NAME} 的变更**:
 ${parsed.summary}
 
 **变更文件**:
@@ -300,7 +300,7 @@ ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
     await gitlab.issues.createNote(
       project.id,
       iid,
-      `🤖 Claude 已完成代码实现并创建了 MR！\n\n**MR 链接**：${mr.web_url}\n\n**变更**：${parsed.summary}`
+      `🤖 ${env.BOT_NAME} 已完成代码实现并创建了 MR！\n\n**MR 链接**：${mr.web_url}\n\n**变更**：${parsed.summary}`
     );
 
     return {
@@ -321,7 +321,7 @@ ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
       await gitlab.issues.createNote(
         project.id,
         iid,
-        `🤖 Claude：代码生成失败\n\n${errorMessage}`
+        `🤖 ${env.BOT_NAME}：代码生成失败\n\n${errorMessage}`
       );
     } catch {
       // ignore
