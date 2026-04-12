@@ -1,28 +1,28 @@
 /**
- * 统一提示词系统
+ * Unified prompt system
  *
- * 提供集中的提示词模板管理、统一的 JSON 输出 Schema 和响应解析器
+ * Provides centralized prompt template management, unified JSON output schema, and response parsers
  */
 
-// ============ 类型定义 ============
+// ============ Type Definitions ============
 
 /**
- * 角色类型
+ * Role type
  */
 export type Role = 'developer' | 'reviewer' | 'analyst';
 
 /**
- * 场景类型
+ * Scenario type
  */
 export type Scenario =
-  | 'comment-issue'    // Issue 评论问答
-  | 'comment-mr'        // MR 评论问答
-  | 'analyze-issue'     // Issue 自动分析
-  | 'review'           // 代码审查
-  | 'create-mr';       // 创建 MR
+  | 'comment-issue'    // Issue comment Q&A
+  | 'comment-mr'        // MR comment Q&A
+  | 'analyze-issue'     // Issue automatic analysis
+  | 'review'           // Code review
+  | 'create-mr';       // Create MR
 
 /**
- * 统一的响应 Schema
+ * Unified response schema
  */
 export interface ClaudeResponse {
   code_changed: boolean;
@@ -34,7 +34,7 @@ export interface ClaudeResponse {
 }
 
 /**
- * 代码审查响应 Schema
+ * Code review response schema
  */
 export interface ReviewResponse {
   blocking: Array<{
@@ -56,7 +56,7 @@ export interface ReviewResponse {
 }
 
 /**
- * Issue 信息
+ * Issue information
  */
 export interface IssueContext {
   iid: number;
@@ -65,7 +65,7 @@ export interface IssueContext {
 }
 
 /**
- * MR 信息
+ * MR information
  */
 export interface MRContext {
   iid: number;
@@ -75,29 +75,29 @@ export interface MRContext {
 }
 
 /**
- * 统一的提示词上下文结构
+ * Unified prompt context structure
  */
 export interface PromptContext {
-  /** 项目路径 (namespace/project) */
+  /** Project path (namespace/project) */
   projectPath: string;
-  /** 用户信息 */
+  /** User information */
   user?: {
     username: string;
   };
-  /** Issue 相关上下文 */
+  /** Issue-related context */
   issue?: IssueContext;
-  /** MR 相关上下文 */
+  /** MR-related context */
   mr?: MRContext;
-  /** 对话历史 */
+  /** Conversation history */
   history?: Array<{
     author: string;
     body: string;
   }>;
-  /** 额外上下文（如 diff、评论等） */
+  /** Extra context (e.g. diff, comments, etc.) */
   extra?: Record<string, unknown>;
 }
 
-// ============ 角色模板 ============
+// ============ Role Templates ============
 
 const ROLE_TEMPLATES: Record<Role, string> = {
   developer: `你是一个资深开发者，擅长代码开发、调试和优化。
@@ -107,7 +107,7 @@ const ROLE_TEMPLATES: Record<Role, string> = {
   analyst: '你是一个资深产品经理和架构师，擅长分析需求并生成详细的设计文档。',
 };
 
-// ============ 场景任务模板 ============
+// ============ Scenario Task Templates ============
 
 const SCENARIO_TASKS: Record<Scenario, string> = {
   'comment-issue': `回答用户的问题，或根据需要使用 Edit/Write 工具修改代码。
@@ -146,16 +146,16 @@ const SCENARIO_TASKS: Record<Scenario, string> = {
 4. 系统会自动创建分支、提交代码并创建 MR`,
 };
 
-// ============ 约束定义 ============
+// ============ Constraint Definitions ============
 
 const CONSTRAINTS = {
-  /** 代码变更约束 */
+  /** Code change constraint */
   CODE_CHANGE: `**绝对禁止**：
 - 禁止执行任何 git 命令（git add、git commit、git push、git checkout 等）
 - 只能使用 Edit/Write 工具修改代码
 - 提交操作由系统自动完成，你只需专注完成任务`,
 
-  /** Issue 评论输出约束 */
+  /** Issue comment output constraint */
   RESULT_OUTPUT_ISSUE: `**输出要求**：回答后，**必须**输出以下结构化信息（使用此精确格式，以便程序解析）：
 
 [RESULT]
@@ -166,7 +166,7 @@ changed_files: ["file1.ts", "file2.ts"]
 
 然后输出 Markdown 格式的回答内容。`,
 
-  /** MR 评论输出约束 */
+  /** MR comment output constraint */
   RESULT_OUTPUT_MR: `**输出要求**：回答后，**必须**输出以下结构化信息（使用此精确格式，以便程序解析）：
 
 [RESULT]
@@ -178,7 +178,7 @@ commit_message: "提交信息"
 
 然后输出 Markdown 格式的回答内容。`,
 
-  /** Issue 分析输出约束 */
+  /** Issue analysis output constraint */
   ANALYSIS_OUTPUT: `**输出要求**：**必须**在设计文档之前输出以下结构化信息（使用此精确格式，以便程序解析）：
 
 [ANALYSIS]
@@ -193,14 +193,14 @@ summary: 一句话总结（不超过50字）
 - 详细设计方案
 - 验收标准`,
 
-  /** 代码审查输出约束（纯 Markdown） */
+  /** Code review output constraint (pure Markdown) */
   REVIEW_OUTPUT: `**输出要求**：请直接输出 Markdown 格式的审查结果，包含以下部分：
 - 🔴 阻塞问题（必须修复）：列出所有 blocking 问题
 - 🟡 建议改进：列出所有建议改进项
 - 🟢 优化建议（可选）：列出所有优化建议
 - 总体评价：对代码变更的整体评价`,
 
-  /** 创建 MR 输出约束 */
+  /** Create MR output constraint */
   RESULT_OUTPUT_CREATE_MR: `**输出要求**：完成后，**必须**输出以下结构化信息（使用此精确格式，以便程序解析）：
 
 [RESULT]
@@ -208,7 +208,7 @@ summary: "变更说明（简述本次代码变更的内容）"
 commit_message: "提交信息（简洁的提交描述）"
 [/RESULT]`,
 
-  /** 创建 MR 约束 */
+  /** Create MR constraint */
   CREATE_MR_CONSTRAINTS: `**重要约束**：
 - **禁止执行任何 git 命令**
 - 不要修改 .gitlab-ci.yml、Dockerfile、config/ 等关键文件
@@ -216,10 +216,10 @@ commit_message: "提交信息（简洁的提交描述）"
 - 测试必须通过才能提交`,
 };
 
-// ============ 辅助函数 ============
+// ============ Helper Functions ============
 
 /**
- * 格式化对话历史
+ * Format conversation history
  */
 function formatHistory(history: PromptContext['history']): string {
   if (!history || history.length === 0) {
@@ -231,7 +231,7 @@ function formatHistory(history: PromptContext['history']): string {
 }
 
 /**
- * 格式化 Issue 上下文
+ * Format Issue context
  */
 function formatIssueContext(issue: PromptContext['issue']): string {
   if (!issue) return '';
@@ -242,7 +242,7 @@ ${issue.description ? `- Issue 描述：${issue.description}` : ''}`;
 }
 
 /**
- * 格式化 MR 上下文
+ * Format MR context
  */
 function formatMRContext(mr: PromptContext['mr']): string {
   if (!mr) return '';
@@ -253,31 +253,31 @@ ${mr.description ? `- MR 描述：${mr.description}` : ''}
 ${mr.sourceBranch ? `- 源分支：${mr.sourceBranch}` : ''}`;
 }
 
-// ============ 主函数 ============
+// ============ Main Function ============
 
 export interface BuildPromptOptions {
-  /** 角色 */
+  /** Role */
   role: Role;
-  /** 场景 */
+  /** Scenario */
   scenario: Scenario;
-  /** 上下文 */
+  /** Context */
   context: PromptContext;
-  /** 任务描述（可选，会自动从场景获取） */
+  /** Task description (optional, auto-derived from scenario) */
   task?: string;
-  /** 额外约束（可选） */
+  /** Extra constraints (optional) */
   constraints?: string[];
 }
 
 /**
- * 构建统一的提示词
+ * Build unified prompt
  */
 export function buildPrompt(options: BuildPromptOptions): string {
   const { role, scenario, context, task, constraints = [] } = options;
 
-  // 1. 角色
+  // 1. Role
   let prompt = ROLE_TEMPLATES[role] + '\n\n';
 
-  // 2. 上下文信息
+  // 2. Context information
   prompt += '## 上下文信息\n';
   prompt += `- 项目：${context.projectPath}\n`;
 
@@ -293,13 +293,13 @@ export function buildPrompt(options: BuildPromptOptions): string {
     prompt += formatMRContext(context.mr) + '\n';
   }
 
-  // 3. 对话历史
+  // 3. Conversation history
   if (context.history && context.history.length > 0) {
     prompt += '## 对话历史\n';
     prompt += formatHistory(context.history) + '\n\n';
   }
 
-  // 4. 任务
+  // 4. Task
   prompt += '## 任务\n';
   prompt += SCENARIO_TASKS[scenario] + '\n';
   if (task) {
@@ -307,7 +307,7 @@ export function buildPrompt(options: BuildPromptOptions): string {
   }
   prompt += '\n';
 
-  // 5. 约束
+  // 5. Constraints
   if (constraints.length > 0) {
     prompt += '## 约束\n';
     for (const c of constraints) {
@@ -316,7 +316,7 @@ export function buildPrompt(options: BuildPromptOptions): string {
     prompt += '\n';
   }
 
-  // 6. 根据场景添加特定约束
+  // 6. Add scenario-specific constraints
   switch (scenario) {
     case 'comment-issue':
       prompt += CONSTRAINTS.CODE_CHANGE + '\n\n';
@@ -345,10 +345,10 @@ export function buildPrompt(options: BuildPromptOptions): string {
   return prompt;
 }
 
-// ============ 响应解析器 ============
+// ============ Response Parsers ============
 
 /**
- * 从响应中提取 JSON
+ * Extract JSON from response
  */
 function extractJSON(response: string): string | null {
   // Try to find JSON object in response
@@ -356,10 +356,10 @@ function extractJSON(response: string): string | null {
   return jsonMatch ? jsonMatch[0] : null;
 }
 
-// ============ 响应验证器 ============
+// ============ Response Validators ============
 
 /**
- * 禁止的命令模式
+ * Forbidden command patterns
  */
 const FORBIDDEN_PATTERNS = [
   /git\s+(add|commit|push|pull|fetch|checkout|branch|merge|rebase|reset|revert|clone)/gi,
@@ -370,7 +370,7 @@ const FORBIDDEN_PATTERNS = [
 ];
 
 /**
- * 验证 Claude 响应是否符合约束
+ * Validate whether Claude response complies with constraints
  */
 export interface ValidationResult {
   valid: boolean;
@@ -378,11 +378,11 @@ export interface ValidationResult {
 }
 
 /**
- * 验证 Claude 响应是否包含禁止的命令
+ * Validate whether Claude response contains forbidden commands
  */
 export function validateResponse(response: string): ValidationResult {
   for (const pattern of FORBIDDEN_PATTERNS) {
-    // 重置正则状态
+    // Reset regex state
     pattern.lastIndex = 0;
     if (pattern.test(response)) {
       return {
@@ -395,7 +395,7 @@ export function validateResponse(response: string): ValidationResult {
 }
 
 /**
- * 生成重试提示
+ * Generate retry prompt
  */
 export function generateRetryPrompt(originalPrompt: string, reason: string): string {
   return `${originalPrompt}
@@ -406,7 +406,7 @@ export function generateRetryPrompt(originalPrompt: string, reason: string): str
 }
 
 /**
- * 解析通用响应
+ * Parse general response
  */
 export function parseResponse(response: string): ClaudeResponse {
   const jsonStr = extractJSON(response);
@@ -437,7 +437,7 @@ export function parseResponse(response: string): ClaudeResponse {
 }
 
 /**
- * 解析代码审查响应
+ * Parse code review response
  */
 export function parseReviewResponse(response: string): ReviewResponse | null {
   const jsonStr = extractJSON(response);
@@ -460,10 +460,10 @@ export function parseReviewResponse(response: string): ReviewResponse | null {
 }
 
 /**
- * 解析创建 MR 响应
+ * Parse create MR response
  */
 export function parseCreateMRResponse(response: string): { summary: string; commitMessage: string } | null {
-  // 尝试解析 [RESULT] 结构化块
+  // Try to parse [RESULT] structured block
   const result = parseResult(response);
   if (result) {
     return {
@@ -472,7 +472,7 @@ export function parseCreateMRResponse(response: string): { summary: string; comm
     };
   }
 
-  // 回退到 JSON 格式
+  // Fall back to JSON format
   const jsonStr = extractJSON(response);
   if (!jsonStr) {
     return null;
@@ -490,24 +490,24 @@ export function parseCreateMRResponse(response: string): { summary: string; comm
 }
 
 /**
- * Issue 分析返回的 category 类型
+ * Category type returned from Issue analysis
  */
 export type IssueCategory = 'new_feature' | 'improvement' | 'bug_fix' | 'not_related' | 'unknown';
 
 /**
- * 从 Issue 分析响应中解析 category
- * Claude 会输出 Markdown 格式，分类在第一部分
+ * Parse category from Issue analysis response
+ * Claude outputs Markdown format, category is in the first section
  */
 export function parseIssueCategory(response: string): IssueCategory {
-  // 匹配常见的分类格式（支持 Markdown 粗体）
+  // Match common category formats (supports Markdown bold)
   const patterns = [
-    // 新功能
+    // New feature
     [/分类[：:]\s*新功能/i, /category[：:]\s*new feature/i, /\*\*分类\*\*[：:]\s*新功能/i, /#+\s*分类[：:]\s*新功能/i],
-    // 优化改进
+    // Improvement
     [/分类[：:]\s*优化改进/i, /category[：:]\s*improvement/i, /\*\*分类\*\*[：:]\s*优化改进/i, /#+\s*分类[：:]\s*优化改进/i],
-    // 问题修复
+    // Bug fix
     [/分类[：:]\s*问题修复/i, /category[：:]\s*bug fix/i, /\*\*分类\*\*[：:]\s*问题修复/i, /#+\s*分类[：:]\s*问题修复/i],
-    // 与项目无关
+    // Not related
     [/分类[：:]\s*与项目无关/i, /category[：:]\s*not related/i, /\*\*分类\*\*[：:]\s*与项目无关/i, /#+\s*分类[：:]\s*与项目无关/i],
   ];
 
@@ -522,11 +522,11 @@ export function parseIssueCategory(response: string): IssueCategory {
   return 'unknown';
 }
 
-// ============ 辅助函数 - 保留向后兼容 ============
+// ============ Helper Functions - Keep for backward compatibility ============
 
 /**
- * @deprecated 使用 buildPrompt 替代
- * 构建评论问答的 Issue 提示词
+ * @deprecated Use buildPrompt instead
+ * Build Issue prompt for comment Q&A
  */
 export function buildIssuePrompt(
   projectPath: string,
@@ -549,8 +549,8 @@ export function buildIssuePrompt(
 }
 
 /**
- * @deprecated 使用 buildPrompt 替代
- * 构建评论问答的 MR 提示词
+ * @deprecated Use buildPrompt instead
+ * Build MR prompt for comment Q&A
  */
 export function buildMRPrompt(
   projectPath: string,
@@ -573,8 +573,8 @@ export function buildMRPrompt(
 }
 
 /**
- * @deprecated 使用 buildPrompt 替代
- * 构建 Issue 分析提示词
+ * @deprecated Use buildPrompt instead
+ * Build Issue analysis prompt
  */
 export function buildAnalyzeIssuePrompt(
   projectPath: string,
@@ -615,7 +615,7 @@ summary: 一句话总结（不超过50字）
 }
 
 /**
- * 解析结构化的 Issue 分析结果
+ * Parse structured Issue analysis result
  */
 export interface StructuredIssueAnalysis {
   category: IssueCategory;
@@ -630,14 +630,14 @@ export function parseStructuredIssueAnalysis(response: string): StructuredIssueA
 
   const block = match[0];
 
-  // 解析 category
+  // Parse category
   let category: IssueCategory = 'unknown';
   const categoryMatch = block.match(/category:\s*(new_feature|improvement|bug_fix|not_related|unknown)/i);
   if (categoryMatch) {
     category = categoryMatch[1] as IssueCategory;
   }
 
-  // 解析 summary
+  // Parse summary
   let summary = '';
   const summaryMatch = block.match(/summary:\s*(.+)/i);
   if (summaryMatch) {
@@ -648,7 +648,7 @@ export function parseStructuredIssueAnalysis(response: string): StructuredIssueA
 }
 
 /**
- * 评论/创建MR 结果解析
+ * Comment/Create MR result parsing
  */
 export interface CommentResult {
   code_changed: boolean;
@@ -658,7 +658,7 @@ export interface CommentResult {
 }
 
 /**
- * 解析 [RESULT] 结构化块
+ * Parse [RESULT] structured block
  */
 export function parseResult(response: string): CommentResult | null {
   const match = response.match(/\[RESULT\][\s\S]*?\[\/RESULT\]/i);
@@ -668,32 +668,32 @@ export function parseResult(response: string): CommentResult | null {
 
   const block = match[0];
 
-  // 解析 code_changed
+  // Parse code_changed
   let code_changed = false;
   const codeChangedMatch = block.match(/code_changed:\s*(true|false)/i);
   if (codeChangedMatch) {
     code_changed = codeChangedMatch[1].toLowerCase() === 'true';
   }
 
-  // 解析 summary
+  // Parse summary
   let summary = '';
   const summaryMatch = block.match(/summary:\s*(.+)/i);
   if (summaryMatch) {
     summary = summaryMatch[1].trim().replace(/^"|"$/g, '');
   }
 
-  // 解析 changed_files（可选）
+  // Parse changed_files (optional)
   let changed_files: string[] | undefined;
   const changedFilesMatch = block.match(/changed_files:\s*(\[.*?\])/i);
   if (changedFilesMatch) {
     try {
       changed_files = JSON.parse(changedFilesMatch[1]);
     } catch {
-      // 解析失败，忽略
+      // Parse failed, ignore
     }
   }
 
-  // 解析 commit_message（可选）
+  // Parse commit_message (optional)
   let commit_message: string | undefined;
   const commitMessageMatch = block.match(/commit_message:\s*(.+)/i);
   if (commitMessageMatch) {
@@ -704,8 +704,8 @@ export function parseResult(response: string): CommentResult | null {
 }
 
 /**
- * @deprecated 使用 buildPrompt 替代
- * 构建代码审查提示词
+ * @deprecated Use buildPrompt instead
+ * Build code review prompt
  */
 export function buildReviewPrompt(
   projectPath: string,
@@ -743,8 +743,8 @@ ${diffText}
 }
 
 /**
- * @deprecated 使用 buildPrompt 替代
- * 构建创建 MR 提示词
+ * @deprecated Use buildPrompt instead
+ * Build create MR prompt
  */
 export function buildCreateMRPrompt(
   projectPath: string,
@@ -766,6 +766,6 @@ export function buildCreateMRPrompt(
   });
 }
 
-// ============ 导出 ============
+// ============ Exports ============
 
 export { CONSTRAINTS };
