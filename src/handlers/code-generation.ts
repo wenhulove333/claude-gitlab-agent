@@ -138,12 +138,12 @@ export async function generateCodeAndCreateMR(
 
   // Check if create MR is enabled
   if (projectSettings.createMREnabled === false) {
-    return { success: false, error: '创建 MR 功能已禁用' };
+    return { success: false, error: 'Create MR feature is disabled' };
   }
 
   // Issue must be opened
   if (state !== 'opened') {
-    return { success: false, error: `Issue 状态为 ${state}，无法创建 MR` };
+    return { success: false, error: `Issue status is ${state}, cannot create MR` };
   }
 
   logInfo(
@@ -218,7 +218,7 @@ export async function generateCodeAndCreateMR(
     // Parse response
     const parsed = parseCodeGenerationResponse(response);
     if (!parsed) {
-      throw new AppError('无法解析 Claude 的响应', 'PARSE_ERROR');
+      throw new AppError('Failed to parse Claude response', 'PARSE_ERROR');
     }
 
     logInfo(
@@ -236,31 +236,31 @@ export async function generateCodeAndCreateMR(
 
     const changedFiles = statusResult.output.trim().split('\n').filter(Boolean);
     if (changedFiles.length === 0) {
-      throw new AppError('Claude 没有生成任何代码变更', 'NO_CHANGES');
+      throw new AppError('Claude did not generate any code changes', 'NO_CHANGES');
     }
 
     // Create new branch
     const branchResult = await gitCreateBranch(workspace.path, branchName);
     if (!branchResult.success) {
-      throw new AppError(`创建分支失败: ${branchResult.error}`, 'GIT_ERROR');
+      throw new AppError(`Failed to create branch: ${branchResult.error}`, 'GIT_ERROR');
     }
 
     // Stage changes
     const addResult = await gitAdd(workspace.path);
     if (!addResult.success) {
-      throw new AppError(`Git add 失败: ${addResult.error}`, 'GIT_ERROR');
+      throw new AppError(`Git add failed: ${addResult.error}`, 'GIT_ERROR');
     }
 
     // Commit
     const commitResult = await gitCommit(workspace.path, parsed.commitMessage);
     if (!commitResult.success) {
-      throw new AppError(`Git commit 失败: ${commitResult.error}`, 'GIT_ERROR');
+      throw new AppError(`Git commit failed: ${commitResult.error}`, 'GIT_ERROR');
     }
 
     // Push
     const pushResult = await gitPush(workspace.path, branchName);
     if (!pushResult.success) {
-      throw new AppError(`Git push 失败: ${pushResult.error}`, 'GIT_ERROR');
+      throw new AppError(`Git push failed: ${pushResult.error}`, 'GIT_ERROR');
     }
 
     logInfo(
@@ -270,15 +270,15 @@ export async function generateCodeAndCreateMR(
 
     // Create MR via GitLab API
     const mrTitle = `[Claude] ${issue.title} #${issue.iid}`;
-    const mrDescription = `此 MR 由 Claude 自动生成，基于 Issue #${issue.iid}。
+    const mrDescription = `此 MR 由 Claude 基于 Issue #${issue.iid} 自动创建。
 
-**Claude 的变更说明**：
+**Claude 的变更**:
 ${parsed.summary}
 
-**变更文件**：
+**变更文件**:
 ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
 
-**人工审阅提醒**：请确认变更符合预期后再合并。`;
+**人工审查提醒**：请在合并前验证变更是否符合预期。`;
 
     const mr = await gitlab.client.post<{ web_url: string; iid: number }>(
       `/projects/${project.id}/merge_requests`,
@@ -300,7 +300,7 @@ ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
     await gitlab.issues.createNote(
       project.id,
       iid,
-      `🤖 Claude 已完成代码编写并创建 MR！\n\n**MR 链接**：${mr.web_url}\n\n**变更说明**：${parsed.summary}`
+      `🤖 Claude 已完成代码实现并创建了 MR！\n\n**MR 链接**：${mr.web_url}\n\n**变更**：${parsed.summary}`
     );
 
     return {
@@ -313,7 +313,7 @@ ${parsed.changedFiles.map((f) => `- ${f}`).join('\n')}
     const errorMessage = error instanceof Error ? error.message : String(error);
     logError(
       { event: 'code_generation_failed', issue_iid: iid, error: errorMessage },
-      `Code generation failed: ${errorMessage}`
+      `代码生成失败：${errorMessage}`
     );
 
     // Try to post error comment

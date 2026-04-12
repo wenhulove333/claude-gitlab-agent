@@ -9,7 +9,7 @@ export interface ProjectSettings {
   autoReviewEnabled: boolean;
   /** Whether creating MRs is enabled */
   createMREnabled: boolean;
-  /** Bot display name (e.g., 小智) */
+  /** Bot display name (e.g., Claude) */
   botName: string;
   /** Bot GitLab username */
   botUsername: string;
@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS: ProjectSettings = {
   claudeEnabled: true,
   autoReviewEnabled: true,
   createMREnabled: false, // Off by default for safety
-  botName: '小智',
+  botName: 'Claude',
   botUsername: 'claude-bot',
   excludePaths: ['*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'],
   maxReviewFiles: 20,

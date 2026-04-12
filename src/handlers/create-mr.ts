@@ -31,24 +31,24 @@ function generateMRTitle(issueTitle: string, issueIid: number, botName: string):
 }
 
 function generateMRDescription(issueIid: number, botName: string, claudeSummary: string, testResults?: string): string {
-  let description = `此 MR 由 ${botName} 自动生成，基于 Issue #${issueIid}。\n\n`;
+  let description = `此 MR 由 ${botName} 基于 Issue #${issueIid} 自动创建。\n\n`;
 
   if (claudeSummary) {
-    description += `**${botName} 的变更说明**：\n${claudeSummary}\n\n`;
+    description += `**${botName} 的变更**:\n${claudeSummary}\n\n`;
   }
 
   if (testResults) {
-    description += `**测试情况**：\n${testResults}\n\n`;
+    description += `**测试结果**:\n${testResults}\n\n`;
   }
 
-  description += `**人工审阅提醒**：请确认变更符合预期后再合并。`;
+  description += `**人工审查提醒**：请在合并前验证变更是否符合预期。`;
 
   return description;
 }
 
 /**
- * 调用 Claude CLI 并验证响应
- * 如果响应包含禁止的命令，会重新调用
+ * Call Claude CLI and validate response
+ * If response contains forbidden commands, it will retry
  */
 async function callClaudeWithValidation(
   cli: ReturnType<typeof getClaudeCLI>,
@@ -73,15 +73,15 @@ async function callClaudeWithValidation(
       return response;
     }
 
-    // 验证失败，追加约束提醒重新生成
-    currentPrompt = generateRetryPrompt(prompt, validation.reason || '响应不符合要求');
+    // Validation failed, append constraints reminder to retry generation
+    currentPrompt = generateRetryPrompt(prompt, validation.reason || 'Response does not meet requirements');
     logWarn(
       { event: 'claude_response_invalid', retry: i + 1, reason: validation.reason },
       `Claude response validation failed, retrying...`
     );
   }
 
-  throw new Error('Claude 响应验证失败，已达到最大重试次数');
+  throw new Error('Claude response validation failed, maximum retries reached');
 }
 
 export interface HandleCreateMROptions {
@@ -148,7 +148,7 @@ export async function handleCreateMR(
 
   try {
     // Post initial response
-    await gitlab.issues.createNote(project.id, iid, `🤖 ${effectiveBotName} 正在处理，请稍候...（这可能需要几分钟）`);
+    await gitlab.issues.createNote(project.id, iid, `🤖 ${effectiveBotName} 正在处理中，请稍候...（可能需要几分钟）`);
 
     // Get issue details and notes for context
     const issue = await gitlab.issues.get(project.id, iid);
@@ -207,7 +207,7 @@ export async function handleCreateMR(
     const result = parseCreateMRResponse(response);
 
     if (!result) {
-      throw new AppError('无法解析 Claude 的响应，请检查 Issue 描述是否清晰', 'PARSE_ERROR');
+      throw new AppError('Failed to parse Claude response. Please check if the Issue description is clear', 'PARSE_ERROR');
     }
 
     // Check for uncommitted changes
@@ -216,7 +216,7 @@ export async function handleCreateMR(
     const hasChanges = !status.isClean();
 
     if (!hasChanges) {
-      throw new AppError('Claude 没有修改任何代码，无法创建 MR', 'NO_CHANGES');
+      throw new AppError('Claude did not modify any code, cannot create MR', 'NO_CHANGES');
     }
 
     // Generate branch name using category prefix
@@ -259,7 +259,7 @@ export async function handleCreateMR(
     await gitlab.issues.createNote(
       project.id,
       iid,
-      `🤖 ${effectiveBotName} 已创建 MR！\n\n**MR 链接**：${mrLink}\n\n请审阅后合并。`
+      `🤖 ${effectiveBotName} 已创建 MR！\n\n**MR 链接**：${mrLink}\n\n请审查并合并。`
     );
 
     // Add mr-created label to the issue
@@ -284,7 +284,7 @@ export async function handleCreateMR(
     const errorMessage = error instanceof Error ? error.message : String(error);
     logError(
       { event: 'create_mr_failed', issue_iid: iid, error: errorMessage },
-      `Create MR failed: ${errorMessage}`
+      `创建 MR 失败：${errorMessage}`
     );
 
     // Post error message
@@ -292,9 +292,9 @@ export async function handleCreateMR(
       let userMessage = `创建 MR 失败：${errorMessage}`;
 
       if (errorMessage.includes('timeout') || errorMessage.includes('超时')) {
-        userMessage = `创建 MR 超时：任务执行时间过长，请尝试简化需求或手动实现。`;
-      } else if (errorMessage.includes('无法解析')) {
-        userMessage = `创建 MR 失败：Issue 描述不够清晰，请补充具体修改点后再试。`;
+        userMessage = `创建 MR 超时：任务执行时间过长，请简化需求或手动实现。`;
+      } else if (errorMessage.includes('无法解析') || errorMessage.includes('parse')) {
+        userMessage = `创建 MR 失败：Issue 描述不够清晰，请补充更多细节后重试。`;
       }
 
       await gitlab.issues.createNote(project.id, iid, `🤖 ${effectiveBotName}：${userMessage}`);
