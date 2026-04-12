@@ -102,7 +102,7 @@ export async function analyzeIssue(
 
     // Remove [ANALYSIS] block, keep only the design doc part for posting
     const designDocContent = response.replace(/\[ANALYSIS\][\s\S]*?\[\/ANALYSIS\]\s*/i, '');
-    const designDoc = `## 📋 Issue Analysis Report\n\n${designDocContent.trim()}`;
+    const designDoc = `## 📋 Issue 分析报告\n\n${designDocContent.trim()}`;
 
     await gitlab.issues.createNote(project.id, iid, designDoc);
 
