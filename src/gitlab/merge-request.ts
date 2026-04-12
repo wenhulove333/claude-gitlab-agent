@@ -6,7 +6,7 @@ import { logger } from '../utils/logger.js';
  * Patterns to match issue references in MR descriptions
  * Matches:
  *   - GitLab keywords: closes #123, fix #123, fixes #123, close #123, resolved #123, resolves #123
- *   - Chinese patterns: 基于 Issue #123, Issue #123
+ *   - Chinese patterns: Based on Issue #123, Issue #123
  */
 const ISSUE_REFERENCE_PATTERNS = [
   /(?:closes?|fix(?:es)?|close|resolve[sd]?)\s*#(\d+)/gi,

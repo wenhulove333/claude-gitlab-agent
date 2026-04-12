@@ -84,7 +84,7 @@ export async function analyzeIssue(
       workingDirectory,
     });
 
-    // 尝试解析结构化数据
+    // Try to parse structured data
     let category: string;
     let summary: string;
 
@@ -94,19 +94,19 @@ export async function analyzeIssue(
       summary = structured.summary;
       logDebug({ event: 'issue_analysis_parsed', issue_iid: iid, category, summary, hasAnalysis: true }, 'Parsed structured issue analysis');
     } else {
-      // 回退到正则解析
+      // Fallback to regex parsing
       category = parseIssueCategory(response);
       summary = '';
       logDebug({ event: 'issue_analysis_parsed', issue_iid: iid, category, responsePreview: response.slice(0, 200), hasAnalysis: false }, 'Failed to parse structured analysis, using fallback');
     }
 
-    // 移除 [ANALYSIS] 块，只保留设计文档部分用于发布
+    // Remove [ANALYSIS] block, keep only the design doc part for posting
     const designDocContent = response.replace(/\[ANALYSIS\][\s\S]*?\[\/ANALYSIS\]\s*/i, '');
-    const designDoc = `## 📋 Issue 分析报告\n\n${designDocContent.trim()}`;
+    const designDoc = `## 📋 Issue Analysis Report\n\n${designDocContent.trim()}`;
 
     await gitlab.issues.createNote(project.id, iid, designDoc);
 
-    // 添加 category 作为标签
+    // Add category as label
     const labelMap: Record<string, string> = {
       new_feature: 'feature',
       improvement: 'improvement',
@@ -121,7 +121,7 @@ export async function analyzeIssue(
         labels: label,
       });
     } catch (labelError) {
-      // 标签添加失败不影响主流程，只记录警告
+      // Label update failure doesn't affect main flow, just log warning
       logError({ event: 'label_update_failed', issue_iid: iid, label, error: String(labelError) }, 'Failed to update issue label');
     }
 
@@ -135,13 +135,13 @@ export async function analyzeIssue(
     const errorMessage = error instanceof Error ? error.message : String(error);
     logError({ event: 'analyze_issue_failed', issue_iid: iid, error: errorMessage }, `Issue analysis failed: ${errorMessage}`);
 
-    // 回复错误到评论
+    // Reply error to comment
     try {
-      const errorResponse = `🤖 ${getEnv().BOT_NAME} 分析失败：
+      const errorResponse = `🤖 ${getEnv().BOT_NAME} Analysis Failed:
 
-错误：${errorMessage}
+Error: ${errorMessage}
 
-调用大模型失败，请重新创建新的议题。`;
+Failed to invoke the AI model. Please create a new issue and try again.`;
       await gitlab.issues.createNote(project.id, iid, errorResponse);
     } catch (noteError) {
       logError({ event: 'analyze_issue_error_reply_failed', issue_iid: iid, error: String(noteError) }, 'Failed to post error reply to issue');

@@ -121,8 +121,8 @@ function buildMRPromptForComment(
 }
 
 /**
- * 调用 Claude CLI 并验证响应
- * 如果响应包含禁止的命令，会重新调用
+ * Call Claude CLI and validate response
+ * If response contains forbidden commands, it will retry
  */
 async function callClaudeWithValidation(
   cli: ReturnType<typeof getClaudeCLI>,
@@ -147,15 +147,15 @@ async function callClaudeWithValidation(
       return response;
     }
 
-    // 验证失败，追加约束提醒重新生成
-    currentPrompt = generateRetryPrompt(prompt, validation.reason || '响应不符合要求');
+    // Validation failed, append constraints reminder to retry generation
+    currentPrompt = generateRetryPrompt(prompt, validation.reason || 'Response does not meet requirements');
     logWarn(
       { event: 'claude_response_invalid', retry: i + 1, reason: validation.reason },
       `Claude response validation failed, retrying...`
     );
   }
 
-  throw new Error('Claude 响应验证失败，已达到最大重试次数');
+  throw new Error('Claude response validation failed, maximum retries reached');
 }
 
 export interface HandleCommentOptions {
@@ -259,7 +259,7 @@ export async function handleClaudeComment(
       await gitlab.notes.create(
         project.id,
         noteableIid,
-        `🤖 ${botName}：工作空间准备失败：${errorMessage}\n\n请稍后重试。`,
+        `🤖 ${botName}: Workspace preparation failed: ${errorMessage}\n\nPlease try again later.`,
         noteableType
       );
     } catch {}
@@ -268,7 +268,7 @@ export async function handleClaudeComment(
 
   // Post initial "processing" comment
   try {
-    await gitlab.notes.create(project.id, noteableIid, `🤖 ${botName} 正在处理，请稍候...`, noteableType);
+    await gitlab.notes.create(project.id, noteableIid, `🤖 ${botName} is processing, please wait...`, noteableType);
   } catch (postError) {
     const postErrorMsg = postError instanceof Error ? postError.message : String(postError);
     logWarn({ event: 'initial_comment_post_failed', error: postErrorMsg }, 'Failed to post initial processing comment');
@@ -330,7 +330,7 @@ export async function handleClaudeComment(
         systemPrompt,
       });
 
-      // 尝试解析 [RESULT] 结构化块
+      // Try to parse [RESULT] structured block
       const result = parseResult(response);
       const responseText = result
         ? response.replace(/\[RESULT\][\s\S]*?\[\/RESULT\]\s*/i, '').trim()
@@ -361,20 +361,20 @@ export async function handleClaudeComment(
       // Post response
       let postedResponse = '';
       if (codeChanged) {
-        postedResponse = `🤖 ${botName} 回复：
+        postedResponse = `🤖 ${botName}:
 
-${responseText || '代码已修改并提交。'}
+${responseText || 'Code has been modified and committed.'}
 
 ---
 
-**代码变更**：${result?.summary || '代码变更'}
+**Code Changes**: ${result?.summary || 'Code changes'}
 
-**提交信息**：${result?.commit_message || 'Update code'}
+**Commit Message**: ${result?.commit_message || 'Update code'}
 
-**分支**：${sourceBranch}`;
+**Branch**: ${sourceBranch}`;
       } else {
-        const responseContent = responseText || '已收到您的请求。';
-        postedResponse = `🤖 ${botName} 回复：
+        const responseContent = responseText || 'Received your request.';
+        postedResponse = `🤖 ${botName}:
 
 ${responseContent}`;
       }
@@ -402,18 +402,18 @@ ${responseContent}`;
     const status = await git.status();
     const hasChanges = !status.isClean();
 
-    // 尝试解析 [RESULT] 结构化块
+    // Try to parse [RESULT] structured block
     const result = parseResult(response);
     let responseText = response;
     if (result) {
-      // 移除 [RESULT] 块，只保留 Markdown 内容
+      // Remove [RESULT] block, keep only Markdown content
       responseText = response.replace(/\[RESULT\][\s\S]*?\[\/RESULT\]\s*/i, '').trim();
     }
 
-    // 如果有结构化的 code_changed 信息，优先使用
+    // If there is structured code_changed info, prefer to use it
     const codeChanged = result?.code_changed ?? hasChanges;
     const codeChangeInfo = result ? {
-      summary: result.summary || '代码变更',
+      summary: result.summary || 'Code changes',
       changedFiles: result.changed_files || [],
       commitMessage: result.commit_message || 'Update code',
     } : null;
@@ -424,20 +424,20 @@ ${responseContent}`;
 
       const { handleCreateMR } = await import('./create-mr.js');
 
-      const formattedResponse = `🤖 ${botName} 回复：
+      const formattedResponse = `🤖 ${botName}:
 
 ${responseText}
 
 ---
 
-**代码变更**：${codeChangeInfo?.summary || '代码变更'}
+**Code Changes**: ${codeChangeInfo?.summary || 'Code changes'}
 
-**变更文件**：
+**Changed Files**:
 ${(codeChangeInfo?.changedFiles || status.modified || []).map((f: string) => `- ${f}`).join('\n')}
 
-**提交信息**：${codeChangeInfo?.commitMessage || 'Update code'}
+**Commit Message**: ${codeChangeInfo?.commitMessage || 'Update code'}
 
-正在创建 MR...`;
+Creating MR...`;
 
       await gitlab.notes.create(project.id, noteableIid, formattedResponse, noteableType);
 
@@ -467,8 +467,8 @@ ${(codeChangeInfo?.changedFiles || status.modified || []).map((f: string) => `- 
       }
     } else {
       // No changes - post response
-      let responseContent = responseText.trim() || '已收到您的请求。';
-      const formattedResponse = `🤖 ${botName} 回复：
+      let responseContent = responseText.trim() || 'Received your request.';
+      const formattedResponse = `🤖 ${botName}:
 
 ${responseContent}`;
 
@@ -488,11 +488,11 @@ ${responseContent}`;
 
     // Post error message
     try {
-      const errorResponse = `🤖 ${botName} 回复：
+      const errorResponse = `🤖 ${botName}:
 
-处理失败：${errorMessage}
+Processing failed: ${errorMessage}
 
-请稍后重试。`;
+Please try again later.`;
 
       await gitlab.notes.create(
         project.id,

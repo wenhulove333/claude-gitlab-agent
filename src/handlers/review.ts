@@ -17,9 +17,9 @@ function formatDiffForReview(diffs: Diff[]): string {
   for (const diff of diffs) {
     output += `\n=== ${diff.new_path} ===\n`;
     if (diff.deleted_file) {
-      output += '(文件已删除)\n';
+      output += '(File deleted)\n';
     } else if (diff.new_file) {
-      output += '(新文件)\n';
+      output += '(New file)\n';
     }
     output += diff.diff + '\n';
   }
@@ -33,7 +33,7 @@ function formatDiffForReview(diffs: Diff[]): string {
  * @returns Formatted comment string
  */
 function formatNoIssuesComment(botName: string): string {
-  return `✅ **${botName} 自动代码审查**\n\n未发现明显问题，代码质量良好。`;
+  return `✅ **${botName} Auto Code Review**\n\nNo obvious issues found, code quality looks good.`;
 }
 
 export interface HandleReviewOptions {
@@ -124,7 +124,7 @@ export async function handleAutoReview(
 
     // Check file count limit
     if (diffs.length > maxFiles) {
-      const comment = `🤖 **${effectiveBotName} 自动代码审查**\n\n此 MR 变更文件过多（${diffs.length} 个），超过自动审查上限（${maxFiles} 个），请人工审查或分批处理。`;
+      const comment = `🤖 **${effectiveBotName} Auto Code Review**\n\nThis MR has too many changed files (${diffs.length}), exceeding the auto review limit (${maxFiles}). Please review manually or split into smaller MRs.`;
       await gitlab.mergeRequests.createNote(project.id, iid, comment);
       logInfo(
         { event: 'mr_too_large', mr_iid: iid, file_count: diffs.length },
@@ -156,7 +156,7 @@ export async function handleAutoReview(
       await gitlab.mergeRequests.createNote(
         project.id,
         iid,
-        `🤖 ${effectiveBotName} 正在review代码，请稍候...`
+        `🤖 ${effectiveBotName} is reviewing code, please wait...`
       );
     } catch (noteError) {
       logWarn({ event: 'review_start_note_failed', mr_iid: iid }, 'Failed to post review start note');
@@ -188,7 +188,7 @@ export async function handleAutoReview(
       await gitlab.mergeRequests.createNote(
         project.id,
         iid,
-        `🤖 **${effectiveBotName} 自动代码审查**\n\n${trimmedResponse}`
+        `🤖 **${effectiveBotName} Auto Code Review**\n\n${trimmedResponse}`
       );
     }
 
@@ -204,7 +204,7 @@ export async function handleAutoReview(
     );
 
     try {
-      const errorComment = `🤖 **${effectiveBotName} 自动代码审查**\n\n审查失败：${errorMessage}`;
+      const errorComment = `🤖 **${effectiveBotName} Auto Code Review**\n\nReview failed: ${errorMessage}`;
       await gitlab.mergeRequests.createNote(project.id, iid, errorComment);
     } catch (postError) {
       logError(
