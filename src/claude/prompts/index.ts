@@ -112,6 +112,10 @@ const ROLE_TEMPLATES: Record<Role, string> = {
 const SCENARIO_TASKS: Record<Scenario, string> = {
   'comment-issue': `回答用户的问题，或根据需要使用 Edit/Write 工具修改代码。
 
+**重要判断**：
+- 如果用户只是在询问或确认某些信息（使用方式、配置方法、概念解释、技术方案咨询等），请只回答问题，不要尝试修改代码
+- 只有当用户明确要求实现功能或修复问题时，才使用 Edit/Write 工具修改代码
+
 如果需要修改代码：
 1. 使用 Edit 或 Write 工具修改代码
 2. **绝对不要执行任何 git 命令**
@@ -125,9 +129,14 @@ const SCENARIO_TASKS: Record<Scenario, string> = {
 3. 系统会自动检测代码变更并提交到 MR 的源分支`,
 
   'analyze-issue': `分析 Issue 内容，生成详细的设计文档。
+
 首先通读代码库，了解项目结构。
 分析 Issue 与项目的关联性。
-如果与项目相关，生成详细的设计文档。`,
+
+**重要分类说明**：
+- 如果 Issue 是在询问或确认某些信息（如使用方式、配置方法、概念解释等），而不是请求实现新功能或修复问题，请分类为"问答确认"(query)
+- 如果与项目相关，生成详细的设计文档
+- 如果与项目完全无关，分类为"与项目无关"`,
 
   'review': `审查代码变更，从以下维度进行：
 1. 逻辑错误
@@ -160,8 +169,8 @@ const CONSTRAINTS = {
 
 [RESULT]
 code_changed: true | false
-summary: "本次变更的简要说明"
-changed_files: ["file1.ts", "file2.ts"]
+summary: "本次变更的简要说明（如果没有修改代码，则说明回答了什么问题）"
+changed_files: ["file1.ts", "file2.ts"]  # 如果没有修改代码，可以省略或留空
 [/RESULT]
 
 然后输出 Markdown 格式的回答内容。`,
@@ -492,7 +501,7 @@ export function parseCreateMRResponse(response: string): { summary: string; comm
 /**
  * Category type returned from Issue analysis
  */
-export type IssueCategory = 'new_feature' | 'improvement' | 'bug_fix' | 'not_related' | 'unknown';
+export type IssueCategory = 'new_feature' | 'improvement' | 'bug_fix' | 'not_related' | 'query' | 'unknown';
 
 /**
  * Parse category from Issue analysis response
@@ -509,12 +518,14 @@ export function parseIssueCategory(response: string): IssueCategory {
     [/分类[：:]\s*问题修复/i, /category[：:]\s*bug fix/i, /\*\*分类\*\*[：:]\s*问题修复/i, /#+\s*分类[：:]\s*问题修复/i],
     // Not related
     [/分类[：:]\s*与项目无关/i, /category[：:]\s*not related/i, /\*\*分类\*\*[：:]\s*与项目无关/i, /#+\s*分类[：:]\s*与项目无关/i],
+    // 问答确认
+    [/分类[：:]\s*问答确认/i, /category[：:]\s*query/i, /\*\*分类\*\*[：:]\s*问答确认/i, /#+\s*分类[：:]\s*问答确认/i],
   ];
 
   for (let i = 0; i < patterns.length; i++) {
     for (const pattern of patterns[i]) {
       if (pattern.test(response)) {
-        return ['new_feature', 'improvement', 'bug_fix', 'not_related'][i] as IssueCategory;
+        return ['new_feature', 'improvement', 'bug_fix', 'not_related', 'query'][i] as IssueCategory;
       }
     }
   }
@@ -602,15 +613,15 @@ export function buildAnalyzeIssuePrompt(
 **必须**在设计文档之前输出以下结构化信息（使用此精确格式，以便程序解析）：
 
 [ANALYSIS]
-category: new_feature | improvement | bug_fix | not_related | unknown
+category: new_feature | improvement | bug_fix | not_related | query | unknown
 summary: 一句话总结（不超过50字）
 [/ANALYSIS]
 
 然后输出 Markdown 格式的设计文档，包含：
-- 分类（新功能/优化改进/问题修复/与项目无关）
+- 分类（新功能/优化改进/问题修复/与项目无关/问答确认）
 - 一句话总结
 - 背景说明
-- 详细设计方案
+- 详细设计方案（如果是问答确认类型，可以简化或跳过）
 - 验收标准`;
 }
 
@@ -632,7 +643,7 @@ export function parseStructuredIssueAnalysis(response: string): StructuredIssueA
 
   // Parse category
   let category: IssueCategory = 'unknown';
-  const categoryMatch = block.match(/category:\s*(new_feature|improvement|bug_fix|not_related|unknown)/i);
+  const categoryMatch = block.match(/category:\s*(new_feature|improvement|bug_fix|not_related|query|unknown)/i);
   if (categoryMatch) {
     category = categoryMatch[1] as IssueCategory;
   }

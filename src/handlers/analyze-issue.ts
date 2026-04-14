@@ -112,6 +112,7 @@ export async function analyzeIssue(
       improvement: 'improvement',
       bug_fix: 'bug',
       not_related: 'wontfix',
+      query: 'question',
       unknown: 'needs-triage',
     };
     const label = labelMap[category] || 'needs-triage';
