@@ -172,8 +172,9 @@ export async function generateCodeAndCreateMR(
     const { issue, notes } = await getIssueContext(gitlab, project.id, iid);
 
     // Build conversation history
+    const atBotName = `@${env.BOT_NAME}`;
     const conversationHistory = notes
-      .filter((n) => n.author.username !== author.username || !n.body.includes('@claude'))
+      .filter((n) => n.author.username !== author.username || !n.body.includes(atBotName))
       .map((n) => `- ${n.author.username}: ${n.body}`)
       .join('\n') || '(无)';
 
