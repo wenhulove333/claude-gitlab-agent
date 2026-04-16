@@ -1,5 +1,5 @@
 import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
-import { createGitLabClient } from '../gitlab/index.js';
+import { createGitLabClient, extractIssueReferences } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
 import { buildSystemPrompt, validateResponse, generateRetryPrompt, parseResult } from '../claude/prompts/index.js';
@@ -217,17 +217,45 @@ export async function handleClaudeComment(
 
   // Determine workspace path based on noteable type
   let workingDirectory: string | undefined;
+  let workspaceType: 'issue' | 'mr' = noteableType === 'Issue' ? 'issue' : 'mr';
+  let workspaceIid: number = noteableIid;
+
+  // For MRs, try to use associated issue's workspace first
+  if (noteableType === 'MergeRequest') {
+    try {
+      const mr = await gitlab.mergeRequests.get(project.id, noteableIid);
+      const referencedIssueIids = extractIssueReferences(mr.description || '');
+      if (referencedIssueIids.length > 0) {
+        const workspaceManager = new WorkspaceManager();
+        const issueIid = referencedIssueIids[0];
+        const issueWorkspaceExists = await workspaceManager.exists(project.name, 'issue', issueIid);
+        if (issueWorkspaceExists) {
+          workspaceType = 'issue';
+          workspaceIid = issueIid;
+          logInfo(
+            { event: 'mr_comment_use_issue_workspace', mr_iid: noteableIid, issue_iid: issueIid },
+            `MR comment #${noteableIid} will use workspace from Issue #${issueIid}`
+          );
+        }
+      }
+    } catch (error) {
+      logWarn(
+        { event: 'mr_comment_get_details_failed', mr_iid: noteableIid, error },
+        `Failed to get MR details for comment, will use MR workspace`
+      );
+    }
+  }
+
   try {
     const workspaceManager = new WorkspaceManager();
-    const workspaceType = noteableType === 'Issue' ? 'issue' : 'mr';
-    const exists = await workspaceManager.exists(project.name, workspaceType, noteableIid);
+    const exists = await workspaceManager.exists(project.name, workspaceType, workspaceIid);
     if (exists) {
-      const status = await workspaceManager.getStatus(project.name, workspaceType, noteableIid);
+      const status = await workspaceManager.getStatus(project.name, workspaceType, workspaceIid);
       if (status.exists) {
         workingDirectory = status.path;
         logDebug(
-          { event: 'workspace_selected', workspacePath: workingDirectory, noteableType, noteableIid },
-          `Using workspace for ${noteableType} #${noteableIid}`
+          { event: 'workspace_selected', workspacePath: workingDirectory, workspaceType, workspaceIid },
+          `Using workspace for ${workspaceType} #${workspaceIid}`
         );
       }
     }
@@ -235,14 +263,14 @@ export async function handleClaudeComment(
     // If workspace doesn't exist, create it
     if (!workingDirectory) {
       logInfo(
-        { event: 'workspace_not_found', noteableType, noteableIid, projectName: project.name },
-        `Workspace not found for ${noteableType} #${noteableIid}, creating...`
+        { event: 'workspace_not_found', workspaceType, workspaceIid, projectName: project.name },
+        `Workspace not found for ${workspaceType} #${workspaceIid}, creating...`
       );
       const workspace = await workspaceManager.getOrCreate({
         type: workspaceType,
         projectId: project.id,
         projectName: project.name,
-        iid: noteableIid,
+        iid: workspaceIid,
         repoUrl: project.git_http_url.replace(
           'http://',
           `http://oauth2:${env.GITLAB_ACCESS_TOKEN}@`
@@ -257,7 +285,7 @@ export async function handleClaudeComment(
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logWarn({ event: 'workspace_setup_failed', noteableType, noteableIid, error: errorMessage }, 'Failed to setup workspace');
+    logWarn({ event: 'workspace_setup_failed', workspaceType, workspaceIid, error: errorMessage }, 'Failed to setup workspace');
     // Post error to user and return
     try {
       await gitlab.notes.create(
@@ -301,7 +329,7 @@ export async function handleClaudeComment(
       const sourceBranch = mr.source_branch;
 
       logInfo(
-        { event: 'mr_processing', mrIid: noteableIid, sourceBranch },
+        { event: 'mr_processing', mrIid: noteableIid, sourceBranch, workspaceType, workspaceIid },
         `Processing MR comment: ${sourceBranch}`
       );
 

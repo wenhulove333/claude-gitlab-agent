@@ -1,5 +1,4 @@
 import { logger } from '../utils/logger.js';
-import { copyClaudeSession } from '../utils/index.js';
 import { createGitLabClient, extractIssueReferences } from '../gitlab/index.js';
 import { getEnv } from '../config/index.js';
 import {
@@ -167,6 +166,39 @@ export function createWebhookHandlers(): WebhookHandler {
 
       const botUsername = getEnv().BOT_USERNAME;
 
+      // Get MR details and referenced issues first
+      let referencedIssueIids: number[] = [];
+      try {
+        const env = getEnv();
+        const gitlab = createGitLabClient({
+          baseUrl: env.GITLAB_URL,
+          token: env.GITLAB_ACCESS_TOKEN,
+        });
+        const mr = await gitlab.mergeRequests.get(project.id, iid);
+        referencedIssueIids = extractIssueReferences(mr.description || '');
+      } catch (error) {
+        logger.warn(
+          { event: 'mr_get_details_failed', mr_iid: iid, error },
+          `Failed to get MR details for #${iid}`
+        );
+      }
+
+      // Determine workspace to use: prefer first referenced issue, otherwise MR itself
+      let workspaceType: 'issue' | 'mr' = 'mr';
+      let workspaceIid: number = iid;
+      if (referencedIssueIids.length > 0) {
+        const issueIid = referencedIssueIids[0];
+        const issueWorkspaceExists = await workspaceManager.exists(project.name, 'issue', issueIid);
+        if (issueWorkspaceExists) {
+          workspaceType = 'issue';
+          workspaceIid = issueIid;
+          logger.info(
+            { event: 'mr_use_issue_workspace', mr_iid: iid, issue_iid: issueIid },
+            `MR #${iid} will use workspace from Issue #${issueIid}`
+          );
+        }
+      }
+
       // Handle auto review and workspace for open/reopen
       if (action === 'open' || action === 'reopen') {
         logger.info(
@@ -180,7 +212,7 @@ export function createWebhookHandlers(): WebhookHandler {
         );
 
         // Add mr-created label to referenced issues when MR is opened
-        if (action === 'open') {
+        if (action === 'open' && referencedIssueIids.length > 0) {
           try {
             const env = getEnv();
             const gitlab = createGitLabClient({
@@ -188,29 +220,23 @@ export function createWebhookHandlers(): WebhookHandler {
               token: env.GITLAB_ACCESS_TOKEN,
             });
 
-            // Get full MR details to parse issue references from description
-            const mr = await gitlab.mergeRequests.get(project.id, iid);
-            const referencedIssueIids = extractIssueReferences(mr.description || '');
+            logger.info(
+              { event: 'mr_issue_references_found', mr_iid: iid, issue_iids: referencedIssueIids },
+              `Found ${referencedIssueIids.length} issue references in MR #${iid}`
+            );
 
-            if (referencedIssueIids.length > 0) {
-              logger.info(
-                { event: 'mr_issue_references_found', mr_iid: iid, issue_iids: referencedIssueIids },
-                `Found ${referencedIssueIids.length} issue references in MR #${iid}`
-              );
-
-              for (const issueIid of referencedIssueIids) {
-                try {
-                  await gitlab.issues.addLabels(project.id, issueIid, [MR_CREATED_LABEL]);
-                  logger.info(
-                    { event: 'issue_label_added', issue_iid: issueIid, mr_iid: iid, label: MR_CREATED_LABEL },
-                    `Added label '${MR_CREATED_LABEL}' to Issue #${issueIid}`
-                  );
-                } catch (labelError) {
-                  logger.warn(
-                    { event: 'issue_label_add_failed', issue_iid: issueIid, mr_iid: iid, error: labelError },
-                    `Failed to add label to Issue #${issueIid}`
-                  );
-                }
+            for (const issueIid of referencedIssueIids) {
+              try {
+                await gitlab.issues.addLabels(project.id, issueIid, [MR_CREATED_LABEL]);
+                logger.info(
+                  { event: 'issue_label_added', issue_iid: issueIid, mr_iid: iid, label: MR_CREATED_LABEL },
+                  `Added label '${MR_CREATED_LABEL}' to Issue #${issueIid}`
+                );
+              } catch (labelError) {
+                logger.warn(
+                  { event: 'issue_label_add_failed', issue_iid: issueIid, mr_iid: iid, error: labelError },
+                  `Failed to add label to Issue #${issueIid}`
+                );
               }
             }
           } catch (error) {
@@ -221,44 +247,58 @@ export function createWebhookHandlers(): WebhookHandler {
           }
         }
 
-        // Auto-create workspace for new/reopened MRs
-        let mrWorkspacePath: string | undefined;
+        // Auto-create/get workspace for MR - use issue's workspace if available, otherwise MR's own
         try {
-          // For MRs, try to clone the source branch directly if it exists
-          // This ensures the workspace starts on the MR's branch
           const cloneBranch = source_branch || project.default_branch;
           const workspace = await workspaceManager.getOrCreate({
-            type: 'mr',
+            type: workspaceType,
             projectId: project.id,
             projectName: project.name,
-            iid,
+            iid: workspaceIid,
             repoUrl: project.git_http_url.replace(
               'http://',
               `http://oauth2:${getEnv().GITLAB_ACCESS_TOKEN}@`
             ),
-            defaultBranch: cloneBranch,
+            defaultBranch: workspaceType === 'issue' ? project.default_branch : cloneBranch,
           });
-          mrWorkspacePath = workspace.path;
           logger.info(
-            { event: 'workspace_auto_created', workspace_id: workspace.id, mr_iid: iid, cloneBranch },
-            `Workspace auto-created for MR #${iid} (cloned branch: ${cloneBranch})`
+            { event: 'workspace_auto_created', workspace_id: workspace.id, mr_iid: iid, workspace_type: workspaceType, workspace_iid: workspaceIid, workspace_path: workspace.path },
+            `Workspace for MR #${iid} using ${workspaceType} #${workspaceIid}`
           );
 
-          // If we cloned default branch but MR has a source branch, checkout to it
-          if (source_branch && cloneBranch !== source_branch) {
+          // If using issue workspace, checkout to MR's source branch
+          if (workspaceType === 'issue' && source_branch) {
             try {
-              const git = await workspaceManager.getGit(project.name, 'mr', iid);
+              const git = await workspaceManager.getGit(project.name, workspaceType, workspaceIid);
               await git.fetch('origin', source_branch);
               await git.checkout(source_branch);
               logger.info(
                 { event: 'workspace_checkout_branch', workspace_id: workspace.id, source_branch },
-                `Workspace checked out to branch ${source_branch}`
+                `Issue workspace checked out to MR branch ${source_branch}`
               );
             } catch (checkoutError) {
               logger.warn(
                 { event: 'workspace_checkout_failed', workspace_id: workspace.id, source_branch, error: checkoutError },
-                `Failed to checkout branch ${source_branch} in workspace`
+                `Failed to checkout branch ${source_branch} in issue workspace`
               );
+            }
+          } else if (workspaceType === 'mr') {
+            // If we cloned default branch but MR has a source branch, checkout to it
+            if (source_branch && cloneBranch !== source_branch) {
+              try {
+                const git = await workspaceManager.getGit(project.name, 'mr', iid);
+                await git.fetch('origin', source_branch);
+                await git.checkout(source_branch);
+                logger.info(
+                  { event: 'workspace_checkout_branch', workspace_id: workspace.id, source_branch },
+                  `MR workspace checked out to branch ${source_branch}`
+                );
+              } catch (checkoutError) {
+                logger.warn(
+                  { event: 'workspace_checkout_failed', workspace_id: workspace.id, source_branch, error: checkoutError },
+                  `Failed to checkout branch ${source_branch} in MR workspace`
+                );
+              }
             }
           }
         } catch (error) {
@@ -266,43 +306,6 @@ export function createWebhookHandlers(): WebhookHandler {
             { event: 'workspace_auto_create_failed', mr_iid: iid, error },
             `Failed to auto-create workspace for MR #${iid}`
           );
-        }
-
-        // Copy Claude session from referenced issue when MR is opened
-        if (action === 'open' && mrWorkspacePath) {
-          try {
-            const env = getEnv();
-            const gitlab = createGitLabClient({
-              baseUrl: env.GITLAB_URL,
-              token: env.GITLAB_ACCESS_TOKEN,
-            });
-
-            // Get full MR details to parse issue references from description
-            const mr = await gitlab.mergeRequests.get(project.id, iid);
-            const referencedIssueIids = extractIssueReferences(mr.description || '');
-
-            if (referencedIssueIids.length > 0) {
-              // Try to copy session from the first referenced issue
-              const issueIid = referencedIssueIids[0];
-              const issueWorkspacePath = workspaceManager.getPath(project.name, 'issue', issueIid);
-
-              // Check if issue workspace exists
-              const issueWorkspaceExists = await workspaceManager.exists(project.name, 'issue', issueIid);
-              if (issueWorkspaceExists) {
-                await copyClaudeSession(issueWorkspacePath, mrWorkspacePath);
-              } else {
-                logger.debug(
-                  { event: 'copy_session_issue_workspace_not_found', issue_iid: issueIid, mr_iid: iid },
-                  `Issue workspace for #${issueIid} does not exist, cannot copy session`
-                );
-              }
-            }
-          } catch (error) {
-            logger.warn(
-              { event: 'copy_session_failed', mr_iid: iid, error: String(error) },
-              `Failed to copy Claude session for MR #${iid}`
-            );
-          }
         }
 
         await handleAutoReview({
@@ -361,17 +364,24 @@ export function createWebhookHandlers(): WebhookHandler {
           );
         }
 
-        // Auto-delete workspace when MR is merged
-        try {
-          await workspaceManager.delete(project.name, 'mr', iid);
+        // Auto-delete MR workspace only if we're not using issue's workspace
+        if (workspaceType === 'mr') {
+          try {
+            await workspaceManager.delete(project.name, 'mr', iid);
+            logger.info(
+              { event: 'workspace_auto_deleted', mr_iid: iid },
+              `Workspace auto-deleted for merged MR #${iid}`
+            );
+          } catch (error) {
+            logger.warn(
+              { event: 'workspace_auto_delete_failed', mr_iid: iid, error },
+              `Failed to auto-delete workspace for MR #${iid}`
+            );
+          }
+        } else {
           logger.info(
-            { event: 'workspace_auto_deleted', mr_iid: iid },
-            `Workspace auto-deleted for merged MR #${iid}`
-          );
-        } catch (error) {
-          logger.warn(
-            { event: 'workspace_auto_delete_failed', mr_iid: iid, error },
-            `Failed to auto-delete workspace for MR #${iid}`
+            { event: 'workspace_keep_issue_workspace', mr_iid: iid, issue_iid: workspaceIid },
+            `Keeping issue workspace #${workspaceIid} for merged MR #${iid}`
           );
         }
       } else if (action === 'close') {
@@ -424,17 +434,24 @@ export function createWebhookHandlers(): WebhookHandler {
           );
         }
 
-        // Auto-delete workspace when MR is closed without merging
-        try {
-          await workspaceManager.delete(project.name, 'mr', iid);
+        // Auto-delete MR workspace only if we're not using issue's workspace
+        if (workspaceType === 'mr') {
+          try {
+            await workspaceManager.delete(project.name, 'mr', iid);
+            logger.info(
+              { event: 'workspace_auto_deleted', mr_iid: iid },
+              `Workspace auto-deleted for closed MR #${iid}`
+            );
+          } catch (error) {
+            logger.warn(
+              { event: 'workspace_auto_delete_failed', mr_iid: iid, error },
+              `Failed to auto-delete workspace for MR #${iid}`
+            );
+          }
+        } else {
           logger.info(
-            { event: 'workspace_auto_deleted', mr_iid: iid },
-            `Workspace auto-deleted for closed MR #${iid}`
-          );
-        } catch (error) {
-          logger.warn(
-            { event: 'workspace_auto_delete_failed', mr_iid: iid, error },
-            `Failed to auto-delete workspace for MR #${iid}`
+            { event: 'workspace_keep_issue_workspace', mr_iid: iid, issue_iid: workspaceIid },
+            `Keeping issue workspace #${workspaceIid} for closed MR #${iid}`
           );
         }
       }
