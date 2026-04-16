@@ -280,7 +280,7 @@ export function createWebhookHandlers(): WebhookHandler {
             try {
               const git = await workspaceManager.getGit(project.name, workspaceType, workspaceIid);
               await git.fetch('origin', source_branch);
-              await git.checkout(source_branch);
+              await git.checkout(['-b', source_branch, 'FETCH_HEAD']);
               logger.info(
                 { event: 'workspace_checkout_branch', workspace_id: workspace.id, source_branch },
                 `Issue workspace checked out to MR branch ${source_branch}`
@@ -297,7 +297,7 @@ export function createWebhookHandlers(): WebhookHandler {
               try {
                 const git = await workspaceManager.getGit(project.name, 'mr', iid);
                 await git.fetch('origin', source_branch);
-                await git.checkout(source_branch);
+                await git.checkout(['-b', source_branch, 'FETCH_HEAD']);
                 logger.info(
                   { event: 'workspace_checkout_branch', workspace_id: workspace.id, source_branch },
                   `MR workspace checked out to branch ${source_branch}`
