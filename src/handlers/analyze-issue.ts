@@ -2,7 +2,7 @@ import { logInfo, logError, logDebug } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
-import { buildAnalyzeIssuePrompt, parseIssueCategory, parseStructuredIssueAnalysis } from '../claude/prompts/index.js';
+import { buildPrompt, parseIssueCategory, parseStructuredIssueAnalysis } from '../claude/prompts/index.js';
 import type { IssueWebhookPayload } from '../webhook/types.js';
 import { getEnv } from '../config/index.js';
 
@@ -69,12 +69,18 @@ export async function analyzeIssue(
     }
   }
 
-  const prompt = buildAnalyzeIssuePrompt(
-    project.path_with_namespace,
-    iid,
-    title,
-    description || '(无)'
-  );
+  const prompt = buildPrompt({
+    role: 'analyst',
+    scenario: 'analyze-issue',
+    context: {
+      projectPath: project.path_with_namespace,
+      issue: {
+        iid,
+        title,
+        description: description || '(无)',
+      },
+    },
+  });
 
   const cli = getClaudeCLI();
 

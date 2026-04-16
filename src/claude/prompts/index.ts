@@ -316,6 +316,12 @@ export function buildPrompt(options: BuildPromptOptions): string {
   }
   prompt += '\n';
 
+  // Add scenario-specific extra context
+  if (scenario === 'review' && context.extra?.diff) {
+    prompt += '## 代码变更\n';
+    prompt += context.extra.diff + '\n\n';
+  }
+
   // 5. Constraints
   if (constraints.length > 0) {
     prompt += '## 约束\n';

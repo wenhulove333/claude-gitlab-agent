@@ -1,7 +1,7 @@
 import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
-import { buildReviewPrompt } from '../claude/prompts/index.js';
+import { buildPrompt } from '../claude/prompts/index.js';
 import type { MRWebhookPayload } from '../webhook/types.js';
 import type { Diff } from '../gitlab/types.js';
 import { getEnv, getProjectSettings } from '../config/index.js';
@@ -164,13 +164,21 @@ export async function handleAutoReview(
 
     // Build prompt and call Claude CLI
     const diffText = formatDiffForReview(filteredDiffs);
-    const prompt = buildReviewPrompt(
-      project.path_with_namespace,
-      iid,
-      title,
-      description,
-      diffText
-    );
+    const prompt = buildPrompt({
+      role: 'reviewer',
+      scenario: 'review',
+      context: {
+        projectPath: project.path_with_namespace,
+        mr: {
+          iid,
+          title,
+          description,
+        },
+        extra: {
+          diff: diffText,
+        },
+      },
+    });
 
     const cli = getClaudeCLI();
 

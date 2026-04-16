@@ -2,7 +2,7 @@ import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
-import { buildCreateMRPrompt, parseCreateMRResponse, validateResponse, generateRetryPrompt } from '../claude/prompts/index.js';
+import { buildPrompt, parseCreateMRResponse, validateResponse, generateRetryPrompt } from '../claude/prompts/index.js';
 import type { IssueWebhookPayload } from '../webhook/types.js';
 import { getEnv, getProjectSettings } from '../config/index.js';
 import { AppError } from '../utils/errors.js';
@@ -185,14 +185,19 @@ export async function handleCreateMR(
     );
 
     // Build prompt and call Claude CLI
-    const prompt = buildCreateMRPrompt(
-      project.path_with_namespace,
-      project.default_branch,
-      issue.iid,
-      issue.title,
-      issue.description || '',
-      notes.map((n) => `- ${n.author.username}: ${n.body}`).join('\n')
-    );
+    const issueContext = `Issue #${issue.iid}: ${issue.title}\n\n描述：\n${issue.description || '(无)'}\n\n评论：\n${notes.map((n) => `- ${n.author.username}: ${n.body}`).join('\n') || '(无)'}`;
+    const prompt = buildPrompt({
+      role: 'developer',
+      scenario: 'create-mr',
+      context: {
+        projectPath: project.path_with_namespace,
+        issue: {
+          iid: issue.iid,
+          title: issue.title,
+          description: issueContext,
+        },
+      },
+    });
 
     const cli = getClaudeCLI();
 
