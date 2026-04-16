@@ -6,8 +6,6 @@ import {
   extractInstruction,
   handleClaudeComment,
   handleAutoReview,
-  isCreateMRCommand,
-  handleCreateMR,
   analyzeIssue,
 } from '../handlers/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
@@ -490,50 +488,6 @@ export function createWebhookHandlers(): WebhookHandler {
         },
         'Claude command detected in comment'
       );
-
-      // Check for /create-mr first
-      if (isCreateMRCommand(commentBody)) {
-        // Get issue payload info if this is on an issue
-        if (noteable_type === 'Issue' && payload.issue) {
-          const env = getEnv();
-          const gitlab = createGitLabClient({
-            baseUrl: env.GITLAB_URL,
-            token: env.GITLAB_ACCESS_TOKEN,
-          });
-
-          // Get full issue details
-          const issue = await gitlab.issues.get(project.id, payload.issue.iid);
-
-          // Create a synthetic IssueWebhookPayload-like structure
-          const issuePayload: IssueWebhookPayload = {
-            object_kind: 'issue',
-            event_type: 'Issue Hook',
-            project: payload.project,
-            user: payload.user,
-            object_attributes: {
-              id: issue.id,
-              iid: issue.iid,
-              title: issue.title,
-              description: issue.description,
-              state: issue.state,
-              action: 'open',
-              created_at: issue.created_at,
-              updated_at: issue.updated_at,
-              labels: [], // Labels not needed for create MR
-            },
-          };
-
-          const projectSettings = {
-            createMREnabled: true, // In production, fetch from project settings
-          };
-
-          await handleCreateMR({
-            payload: issuePayload,
-            projectSettings,
-          });
-        }
-        return;
-      }
 
       // Handle regular @claude Q&A
       const instruction = extractInstruction(commentBody);

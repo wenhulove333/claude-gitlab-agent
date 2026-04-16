@@ -15,6 +15,8 @@ AI-powered assistant deeply integrated into GitLab, enabling teams to interact w
 - Triggered by mentioning `@claude <instruction>` in Issue or MR comments
 - Claude autonomously decides whether code modifications are needed
 - Supports code explanation, error analysis, optimization suggestions, review requests, and more
+- **Session Persistence**: Multiple interactions on the same Issue/MR share Claude session for context continuity
+- **Smart Workspace Association**: MR comments prefer using workspace from associated Issue for code consistency
 
 ### 2. Automatic Code Review
 
@@ -27,10 +29,10 @@ AI-powered assistant deeply integrated into GitLab, enabling teams to interact w
 - Claude reads codebase and analyzes Issue relevance
 - Generates Markdown design document posted to Issue comments
 
-### 4. Create MR from Issue
+### 4. Enhanced Features
 
-- Triggered by `@claude /create-mr` or equivalent natural language
-- Claude analyzes Issue, generates code, creates branch and MR
+- **Process Heartbeat Monitoring**: Real-time Claude CLI execution status monitoring for long-running tasks
+- **Smart Timeout Handling**: Dynamic timeout determination based on child process activity to prevent accidental task termination
 
 ## Quick Start
 
@@ -69,6 +71,23 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 
 # Security (Webhook Verification)
 WEBHOOK_SECRET=your-webhook-secret
+
+# Workspace Configuration
+WORKSPACE_ROOT=/data/workspaces
+WORKSPACE_TTL_HOURS=24
+MAX_WORKSPACES=50
+
+# Redis Configuration
+REDIS_URL=redis://localhost:6379
+
+# Claude CLI Configuration
+CLI_TIMEOUT_SECONDS=120
+CLI_HEARTBEAT_INTERVAL=30
+USE_DOCKER_ISOLATION=false
+
+# Bot Configuration
+BOT_NAME=Claude
+BOT_USERNAME=claude-bot
 ```
 
 ### Running
@@ -143,13 +162,14 @@ src/
 ├── config/          # Configuration management
 ├── gitlab/          # GitLab API client
 ├── handlers/        # Business logic handlers
-│   ├── comment.ts  # Comment Q&A (with autonomous code modification)
+│   ├── comment.ts  # Comment Q&A (with autonomous code modification + session management)
 │   ├── analyze-issue.ts # Issue auto-analysis and design doc generation
-│   ├── review.ts   # Automatic code review
-│   └── create-mr.ts # Create MR from Issue
+│   └── review.ts   # Automatic code review
 ├── webhook/         # Webhook server
 ├── workspace/       # Workspace management
 ├── claude/         # Claude CLI wrapper
+│   ├── cli.ts      # Claude CLI executor (session resume + heartbeat monitoring)
+│   └── prompts/    # Unified prompt template system
 ├── metrics/         # Prometheus metrics
 └── utils/           # Utilities
 ```
@@ -170,7 +190,6 @@ Configure CI/CD variables in GitLab project:
 | ------------------------------ | ----------- | ---------------------------- |
 | `CLAUDE_ENABLED`               | true        | Enable Claude                |
 | `CLAUDE_AUTO_REVIEW_ENABLED`  | true        | Enable auto review           |
-| `CLAUDE_CREATE_MR_ENABLED`    | false       | Allow MR creation            |
 | `CLAUDE_BOT_USERNAME`          | claude-bot  | Bot username                 |
 | `CLAUDE_MAX_REVIEW_FILES`     | 20          | Max files to review          |
 

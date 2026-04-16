@@ -17,6 +17,8 @@
 - 在 Issue 或 MR 评论中 `@claude <指令>` 触发
 - Claude 自主判断是否需要修改代码，如需修改则自动提交到 MR 源分支或创建新分支提交 MR
 - 支持代码解释、错误分析、代码优化、Review 请求等任意问答场景
+- **会话持久化**：同一 Issue/MR 的多次交互共享 Claude 会话，保持上下文连续性
+- **智能工作空间关联**：MR 评论优先使用其关联 Issue 的工作空间，确保代码一致性
 
 ### 2. 自动代码审查
 
@@ -29,10 +31,10 @@
 - Claude 阅读代码库并分析 Issue 关联性
 - 生成 Markdown 格式设计文档发布到 Issue 评论
 
-### 4. 基于 Issue 创建 MR
+### 4. 增强特性
 
-- `@claude /create-mr` 或等效自然语言触发
-- Claude 分析 Issue、生成代码、创建分支和 MR
+- **进程心跳监控**：实时监控 Claude CLI 执行状态，支持长时间运行任务
+- **智能超时处理**：基于子进程活动动态判断超时，避免任务被意外终止
 
 ## 快速开始
 
@@ -71,6 +73,23 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 
 # 安全配置（Webhook 验证）
 WEBHOOK_SECRET=your-webhook-secret
+
+# 工作空间配置
+WORKSPACE_ROOT=/data/workspaces
+WORKSPACE_TTL_HOURS=24
+MAX_WORKSPACES=50
+
+# Redis 配置
+REDIS_URL=redis://localhost:6379
+
+# Claude CLI 配置
+CLI_TIMEOUT_SECONDS=120
+CLI_HEARTBEAT_INTERVAL=30
+USE_DOCKER_ISOLATION=false
+
+# Bot 配置
+BOT_NAME=Claude
+BOT_USERNAME=claude-bot
 ```
 
 ### 启动
@@ -145,13 +164,14 @@ src/
 ├── config/          # 配置管理
 ├── gitlab/         # GitLab API 客户端
 ├── handlers/       # 业务处理器
-│   ├── comment.ts  # 评论问答（支持自主代码修改）
+│   ├── comment.ts  # 评论问答（支持自主代码修改 + 会话管理）
 │   ├── analyze-issue.ts # Issue 创建时自动分析生成设计文档
-│   ├── review.ts   # 自动审查
-│   └── create-mr.ts # 创建 MR
+│   └── review.ts   # 自动审查
 ├── webhook/        # Webhook 服务器
 ├── workspace/      # 工作空间管理
 ├── claude/         # Claude CLI 封装
+│   ├── cli.ts      # Claude CLI 执行器（支持会话恢复 + 心跳监控）
+│   └── prompts/    # 统一提示模板系统
 ├── metrics/        # Prometheus 指标
 └── utils/          # 工具函数
 ```
@@ -172,7 +192,6 @@ src/
 | ---------------------------- | ---------- | ----------- |
 | `CLAUDE_ENABLED`             | true       | 是否启用 Claude |
 | `CLAUDE_AUTO_REVIEW_ENABLED` | true       | 是否启用自动审查    |
-| `CLAUDE_CREATE_MR_ENABLED`   | false      | 是否允许创建 MR   |
 | `CLAUDE_BOT_USERNAME`        | claude-bot | Bot 用户名     |
 | `CLAUDE_MAX_REVIEW_FILES`    | 20         | 最大审查文件数     |
 

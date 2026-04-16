@@ -7,8 +7,6 @@ export interface ProjectSettings {
   claudeEnabled: boolean;
   /** Whether auto review is enabled */
   autoReviewEnabled: boolean;
-  /** Whether creating MRs is enabled */
-  createMREnabled: boolean;
   /** Bot display name (e.g., Claude) */
   botName: string;
   /** Bot GitLab username */
@@ -24,7 +22,6 @@ export interface ProjectSettings {
 const DEFAULT_SETTINGS: ProjectSettings = {
   claudeEnabled: true,
   autoReviewEnabled: true,
-  createMREnabled: false, // Off by default for safety
   botName: 'Claude',
   botUsername: 'claude-bot',
   excludePaths: ['*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'],
@@ -61,7 +58,6 @@ export async function getProjectSettings(projectId: number): Promise<ProjectSett
     const variableNames = [
       'CLAUDE_ENABLED',
       'CLAUDE_AUTO_REVIEW_ENABLED',
-      'CLAUDE_CREATE_MR_ENABLED',
       'CLAUDE_BOT_NAME',
       'CLAUDE_BOT_USERNAME',
       'CLAUDE_EXCLUDE_PATHS',
@@ -84,9 +80,6 @@ export async function getProjectSettings(projectId: number): Promise<ProjectSett
             break;
           case 'CLAUDE_AUTO_REVIEW_ENABLED':
             settings.autoReviewEnabled = value === 'true';
-            break;
-          case 'CLAUDE_CREATE_MR_ENABLED':
-            settings.createMREnabled = value === 'true';
             break;
           case 'CLAUDE_BOT_NAME':
             settings.botName = value;
@@ -186,9 +179,6 @@ export async function updateProjectSettings(
   }
   if (settings.autoReviewEnabled !== undefined) {
     variableMap['CLAUDE_AUTO_REVIEW_ENABLED'] = String(settings.autoReviewEnabled);
-  }
-  if (settings.createMREnabled !== undefined) {
-    variableMap['CLAUDE_CREATE_MR_ENABLED'] = String(settings.createMREnabled);
   }
   if (settings.botName !== undefined) {
     variableMap['CLAUDE_BOT_NAME'] = settings.botName;

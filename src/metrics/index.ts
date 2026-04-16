@@ -10,7 +10,7 @@
  */
 
 export type EventType = 'issue' | 'merge_request' | 'note' | 'unknown';
-export type TaskType = 'comment' | 'review' | 'create_mr' | 'unknown';
+export type TaskType = 'comment' | 'review' | 'unknown';
 
 // Simple counter implementation
 class Counter {

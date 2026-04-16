@@ -18,8 +18,7 @@ export type Scenario =
   | 'comment-issue'    // Issue comment Q&A
   | 'comment-mr'        // MR comment Q&A
   | 'analyze-issue'     // Issue automatic analysis
-  | 'review'           // Code review
-  | 'create-mr';       // Create MR
+  | 'review';           // Code review
 
 /**
  * Unified response schema
@@ -29,8 +28,6 @@ export interface ClaudeResponse {
   summary: string;
   changed_files?: string[];
   commit_message?: string;
-  create_mr?: boolean;
-  branch?: string;
 }
 
 /**
@@ -151,14 +148,6 @@ const SCENARIO_TASKS: Record<Scenario, string> = {
 4. 代码风格
 5. 可读性
 6. 测试覆盖`,
-
-  'create-mr': `分析 Issue 需求，使用 Edit/Write 工具实现代码变更。
-
-请按以下步骤操作：
-1. 分析需求，确定需要修改/新增的文件
-2. 使用 Edit/Write 工具修改代码（**禁止 git 命令**）
-3. 如果存在测试命令（如 npm test、make test），运行并确保通过；若失败，尝试修复
-4. 系统会自动创建分支、提交代码并创建 MR`,
 };
 
 // ============ Constraint Definitions ============
@@ -215,21 +204,6 @@ summary: 一句话总结（不超过50字）
 - 🟡 建议改进：列出所有建议改进项
 - 🟢 优化建议（可选）：列出所有优化建议
 - 总体评价：对代码变更的整体评价`,
-
-  /** Create MR output constraint */
-  RESULT_OUTPUT_CREATE_MR: `**输出要求**：完成后，**必须**输出以下结构化信息（使用此精确格式，以便程序解析）：
-
-[RESULT]
-summary: "变更说明（简述本次代码变更的内容）"
-commit_message: "提交信息（简洁的提交描述）"
-[/RESULT]`,
-
-  /** Create MR constraint */
-  CREATE_MR_CONSTRAINTS: `**重要约束**：
-- **禁止执行任何 git 命令**
-- 不要修改 .gitlab-ci.yml、Dockerfile、config/ 等关键文件
-- 确保代码变更与 Issue 描述一致
-- 测试必须通过才能提交`,
 };
 
 // ============ Helper Functions ============
@@ -352,11 +326,6 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
     case 'review':
       prompt += CONSTRAINTS.REVIEW_OUTPUT + '\n';
       break;
-
-    case 'create-mr':
-      prompt += CONSTRAINTS.CREATE_MR_CONSTRAINTS + '\n\n';
-      prompt += CONSTRAINTS.RESULT_OUTPUT_CREATE_MR + '\n';
-      break;
   }
 
   return prompt;
@@ -442,8 +411,6 @@ export function parseResponse(response: string): ClaudeResponse {
       summary: parsed.summary ?? '',
       changed_files: parsed.changed_files,
       commit_message: parsed.commit_message,
-      create_mr: parsed.create_mr,
-      branch: parsed.branch,
     };
   } catch {
     return {
@@ -598,36 +565,6 @@ export function parseResult(response: string): CommentResult | null {
   }
 
   return { code_changed, summary, changed_files, commit_message };
-}
-
-/**
- * Parse create MR response
- */
-export function parseCreateMRResponse(response: string): { summary: string; commitMessage: string } | null {
-  // Try to parse [RESULT] structured block
-  const result = parseResult(response);
-  if (result) {
-    return {
-      summary: result.summary || '',
-      commitMessage: result.commit_message || '',
-    };
-  }
-
-  // Fall back to JSON format
-  const jsonStr = extractJSON(response);
-  if (!jsonStr) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(jsonStr);
-    return {
-      summary: parsed.summary || '',
-      commitMessage: parsed.commit_message || '',
-    };
-  } catch {
-    return null;
-  }
 }
 
 // ============ Exports ============
