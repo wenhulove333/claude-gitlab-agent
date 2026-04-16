@@ -342,9 +342,9 @@ export async function handleClaudeComment(
           `Resetting workspace to MR source branch`
         );
         await git.fetch('origin', sourceBranch);
-        await git.reset(['--hard', `origin/${sourceBranch}`]);
+        await git.reset(['--hard', 'FETCH_HEAD']);
         if (currentBranch !== sourceBranch) {
-          await git.checkout(['-B', sourceBranch, `origin/${sourceBranch}`]).catch(async () => {
+          await git.checkout(['-B', sourceBranch, 'FETCH_HEAD']).catch(async () => {
             await git.checkout(sourceBranch);
           });
         }
