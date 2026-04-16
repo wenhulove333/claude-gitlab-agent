@@ -455,7 +455,7 @@ ${responseContent}`;
         `Committing and pushing changes for Issue #${payload.issue.iid}`
       );
 
-      // Get issue details for labels and branch naming
+      // Get issue details for labels (always needed for category prefix)
       const issue = await gitlab.issues.get(project.id, payload.issue.iid);
 
       // Extract category from issue labels for branch naming
@@ -471,13 +471,52 @@ ${responseContent}`;
         .map((l: string) => labelToPrefix[l] || 'task')
         .find((p: string) => p !== 'task') || 'task';
 
-      // Generate branch name
-      const shortDesc = summary
-        .toLowerCase()
-        .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '-')
-        .replace(/-+/g, '-')
-        .slice(0, 20);
-      const branchName = `${categoryPrefix}/issue-${payload.issue.iid}-${shortDesc}`;
+      // Determine branch name: use result.branch_name if provided, otherwise generate
+      let branchName: string;
+      if (result?.branch_name) {
+        const rawBranchName = result.branch_name;
+        // Check if branch name already has a category prefix
+        const hasCategoryPrefix = ['feature/', 'improvement/', 'fix/', 'wontfix/', 'task/'].some(
+          prefix => rawBranchName.startsWith(prefix)
+        );
+
+        if (hasCategoryPrefix) {
+          branchName = rawBranchName;
+          logInfo(
+            { event: 'use_branch_from_result', branchName },
+            `Using branch name from RESULT (already has category prefix): ${branchName}`
+          );
+        } else {
+          branchName = `${categoryPrefix}/${rawBranchName}`;
+          logInfo(
+            { event: 'use_branch_from_result_with_prefix', rawBranchName, branchName, categoryPrefix },
+            `Using branch name from RESULT with added category prefix: ${branchName}`
+          );
+        }
+      } else {
+        // Generate branch name
+        const shortDesc = summary
+          .toLowerCase()
+          .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '-')
+          .replace(/-+/g, '-')
+          .slice(0, 20);
+        branchName = `${categoryPrefix}/issue-${payload.issue.iid}-${shortDesc}`;
+      }
+
+      // Checkout the branch (create if doesn't exist)
+      try {
+        // First try to checkout existing branch
+        await git.checkout(branchName).catch(async () => {
+          // If branch doesn't exist, create it from default branch
+          await git.checkout(['-b', branchName, `origin/${project.default_branch}`]);
+        });
+        logInfo({ event: 'branch_checked_out', branchName }, `Checked out branch: ${branchName}`);
+      } catch (branchError) {
+        logWarn(
+          { event: 'branch_checkout_failed', branchName, error: String(branchError) },
+          `Failed to checkout branch ${branchName}, will try to push to new branch directly`
+        );
+      }
 
       // Create branch, commit and push
       await git.add('.');
@@ -519,6 +558,8 @@ ${responseText || '代码已修改并提交。'}
 **代码变更**：${summary}
 
 **提交信息**：${commitMessage}
+
+**分支**：${branchName}
 
 **MR 链接**：${mr.web_url}`;
 
