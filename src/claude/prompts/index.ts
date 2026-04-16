@@ -168,7 +168,7 @@ code_changed: true | false # 是否修改了代码
 summary: "本次变更的简要说明" # 如果没有修改代码，可以省略或留空
 changed_files: ["file1.ts", "file2.ts"]  # 如果没有修改代码，可以省略或留空
 commit_message: "提交信息"  # 如果修改了代码，此项为必填；如果没有修改代码，可以省略
-branch_name: "branch-name"  # 如果修改了代码，此项为必填；指定要使用的分支名称
+branch_name: "分支名要根据代码变更确定，要简洁明了"  # 如果修改了代码，此项为必填；指定要使用的分支名称
 [/RESULT]
 
 然后输出 Markdown 格式的回答内容。`,
