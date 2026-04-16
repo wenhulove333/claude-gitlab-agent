@@ -7,6 +7,8 @@ import type { NoteWebhookPayload } from '../webhook/types.js';
 import type { Note } from '../gitlab/types.js';
 import { getEnv } from '../config/index.js';
 import simpleGit from 'simple-git';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 
 const MAX_INSTRUCTION_LENGTH = 2000;
 
@@ -335,6 +337,20 @@ export async function handleClaudeComment(
 
       // Reset workspace to remote source branch to ensure local matches remote
       const git = simpleGit(workingDirectory);
+      // Backup .claude directory before reset (contains session UUID)
+      const claudeDir = join(workingDirectory, '.claude');
+      let claudeBackup: string | null = null;
+      try {
+        await fs.access(claudeDir);
+        claudeBackup = await fs.mkdtemp(join(workingDirectory, 'claude-backup-'));
+        const entries = await fs.readdir(claudeDir);
+        for (const entry of entries) {
+          await fs.cp(join(claudeDir, entry), join(claudeBackup, entry), { recursive: true });
+        }
+        logDebug({ event: 'claude_session_backup', backupPath: claudeBackup }, 'Backed up .claude directory');
+      } catch {
+        claudeBackup = null;
+      }
       try {
         const currentBranch = (await git.branch()).current;
         logInfo(
@@ -353,6 +369,20 @@ export async function handleClaudeComment(
           { event: 'branch_reset_failed', error: String(branchError) },
           'Failed to reset to source branch, continuing with current branch'
         );
+      }
+      // Restore .claude directory after reset
+      if (claudeBackup) {
+        try {
+          await fs.mkdir(claudeDir, { recursive: true });
+          const entries = await fs.readdir(claudeBackup);
+          for (const entry of entries) {
+            await fs.cp(join(claudeBackup, entry), join(claudeDir, entry), { recursive: true });
+          }
+          await fs.rm(claudeBackup, { recursive: true, force: true });
+          logDebug({ event: 'claude_session_restored' }, 'Restored .claude directory');
+        } catch (restoreError) {
+          logWarn({ event: 'claude_session_restore_failed', error: String(restoreError) }, 'Failed to restore .claude directory');
+        }
       }
 
       const { systemPrompt: builtSystemPrompt, userPrompt } = buildMRPromptForComment(project.path_with_namespace, noteableIid, mr.title, sourceBranch, instruction, history);
