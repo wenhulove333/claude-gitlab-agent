@@ -1,7 +1,7 @@
 import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
-import { buildPrompt } from '../claude/prompts/index.js';
+import { buildSystemPrompt } from '../claude/prompts/index.js';
 import type { MRWebhookPayload } from '../webhook/types.js';
 import type { Diff } from '../gitlab/types.js';
 import { getEnv, getProjectSettings } from '../config/index.js';
@@ -164,7 +164,7 @@ export async function handleAutoReview(
 
     // Build prompt and call Claude CLI
     const diffText = formatDiffForReview(filteredDiffs);
-    const prompt = buildPrompt({
+    const systemPrompt = buildSystemPrompt({
       role: 'reviewer',
       scenario: 'review',
       context: {
@@ -184,8 +184,9 @@ export async function handleAutoReview(
 
     logDebug({ event: 'claude_review_call', mr_iid: iid }, 'Calling Claude for review');
 
-    const response = await cli.prompt(prompt, {
+    const response = await cli.prompt('', {
       timeout: 120, // 2 minutes for review
+      systemPrompt,
     });
 
     // Since Claude now outputs Markdown directly, just post the response

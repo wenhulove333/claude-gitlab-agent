@@ -264,24 +264,23 @@ ${mr.sourceBranch ? `- 源分支：${mr.sourceBranch}` : ''}`;
 
 // ============ Main Function ============
 
-export interface BuildPromptOptions {
+export interface BuildSystemPromptOptions {
   /** Role */
   role: Role;
   /** Scenario */
   scenario: Scenario;
   /** Context */
   context: PromptContext;
-  /** Task description (optional, auto-derived from scenario) */
-  task?: string;
   /** Extra constraints (optional) */
   constraints?: string[];
 }
 
 /**
- * Build unified prompt
+ * Build system prompt (角色、场景、上下文、约束)
+ * Returns: systemPrompt - 使用 --system-prompt 传递的内容
  */
-export function buildPrompt(options: BuildPromptOptions): string {
-  const { role, scenario, context, task, constraints = [] } = options;
+export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
+  const { role, scenario, context, constraints = [] } = options;
 
   // 1. Role
   let prompt = ROLE_TEMPLATES[role] + '\n\n';
@@ -308,13 +307,9 @@ export function buildPrompt(options: BuildPromptOptions): string {
     prompt += formatHistory(context.history) + '\n\n';
   }
 
-  // 4. Task
+  // 4. Scenario task
   prompt += '## 任务\n';
-  prompt += SCENARIO_TASKS[scenario] + '\n';
-  if (task) {
-    prompt += `\n用户请求：${task}\n`;
-  }
-  prompt += '\n';
+  prompt += SCENARIO_TASKS[scenario] + '\n\n';
 
   // Add scenario-specific extra context
   if (scenario === 'review' && context.extra?.diff) {
@@ -475,36 +470,6 @@ export function parseReviewResponse(response: string): ReviewResponse | null {
 }
 
 /**
- * Parse create MR response
- */
-export function parseCreateMRResponse(response: string): { summary: string; commitMessage: string } | null {
-  // Try to parse [RESULT] structured block
-  const result = parseResult(response);
-  if (result) {
-    return {
-      summary: result.summary || '',
-      commitMessage: result.commit_message || '',
-    };
-  }
-
-  // Fall back to JSON format
-  const jsonStr = extractJSON(response);
-  if (!jsonStr) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(jsonStr);
-    return {
-      summary: parsed.summary || '',
-      commitMessage: parsed.commit_message || '',
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Category type returned from Issue analysis
  */
 export type IssueCategory = 'new_feature' | 'improvement' | 'bug_fix' | 'not_related' | 'query' | 'unknown';
@@ -537,98 +502,6 @@ export function parseIssueCategory(response: string): IssueCategory {
   }
 
   return 'unknown';
-}
-
-// ============ Helper Functions - Keep for backward compatibility ============
-
-/**
- * @deprecated Use buildPrompt instead
- * Build Issue prompt for comment Q&A
- */
-export function buildIssuePrompt(
-  projectPath: string,
-  issueIid: number,
-  issueTitle: string,
-  issueDescription: string,
-  instruction: string,
-  history: PromptContext['history']
-): string {
-  return buildPrompt({
-    role: 'developer',
-    scenario: 'comment-issue',
-    context: {
-      projectPath,
-      issue: { iid: issueIid, title: issueTitle, description: issueDescription },
-      history,
-    },
-    task: instruction,
-  });
-}
-
-/**
- * @deprecated Use buildPrompt instead
- * Build MR prompt for comment Q&A
- */
-export function buildMRPrompt(
-  projectPath: string,
-  mrIid: number,
-  mrTitle: string,
-  sourceBranch: string,
-  instruction: string,
-  history: PromptContext['history']
-): string {
-  return buildPrompt({
-    role: 'developer',
-    scenario: 'comment-mr',
-    context: {
-      projectPath,
-      mr: { iid: mrIid, title: mrTitle, sourceBranch },
-      history,
-    },
-    task: instruction,
-  });
-}
-
-/**
- * @deprecated Use buildPrompt instead
- * Build Issue analysis prompt
- */
-export function buildAnalyzeIssuePrompt(
-  projectPath: string,
-  issueIid: number,
-  issueTitle: string,
-  issueDescription: string
-): string {
-  return `你是一个资深产品经理和架构师，擅长分析需求并生成详细的设计文档。
-
-## 上下文信息
-- 项目：${projectPath}
-- Issue 编号：#${issueIid}
-
-## Issue 信息
-- 标题：${issueTitle}
-- 描述：${issueDescription || '(无)'}
-
-## 任务
-分析 Issue 内容，生成详细的设计文档。
-首先通读代码库，了解项目结构。
-分析 Issue 与项目的关联性。
-如果与项目相关，生成详细的设计文档。
-
-## 输出要求
-**必须**在设计文档之前输出以下结构化信息（使用此精确格式，以便程序解析）：
-
-[ANALYSIS]
-category: new_feature | improvement | bug_fix | not_related | query | unknown
-summary: 一句话总结（不超过50字）
-[/ANALYSIS]
-
-然后输出 Markdown 格式的设计文档，包含：
-- 分类（新功能/优化改进/问题修复/与项目无关/问答确认）
-- 一句话总结
-- 背景说明
-- 详细设计方案（如果是问答确认类型，可以简化或跳过）
-- 验收标准`;
 }
 
 /**
@@ -721,66 +594,33 @@ export function parseResult(response: string): CommentResult | null {
 }
 
 /**
- * @deprecated Use buildPrompt instead
- * Build code review prompt
+ * Parse create MR response
  */
-export function buildReviewPrompt(
-  projectPath: string,
-  mrIid: number,
-  mrTitle: string,
-  mrDescription: string,
-  diffText: string
-): string {
-  return `你是一个专业的代码审查员，擅长发现代码中的问题并提供改进建议。
+export function parseCreateMRResponse(response: string): { summary: string; commitMessage: string } | null {
+  // Try to parse [RESULT] structured block
+  const result = parseResult(response);
+  if (result) {
+    return {
+      summary: result.summary || '',
+      commitMessage: result.commit_message || '',
+    };
+  }
 
-## 上下文信息
-- 项目：${projectPath}
-- MR 编号：!${mrIid}
-- MR 标题：${mrTitle}
-- MR 描述：${mrDescription || '(无)'}
+  // Fall back to JSON format
+  const jsonStr = extractJSON(response);
+  if (!jsonStr) {
+    return null;
+  }
 
-## 任务
-审查代码变更，从以下维度进行：
-1. 逻辑错误
-2. 性能问题
-3. 安全隐患
-4. 代码风格
-5. 可读性
-6. 测试覆盖
-
-## 代码变更
-${diffText}
-
-## 输出要求
-请直接输出 Markdown 格式的审查结果，包含以下部分（不要输出 JSON）：
-- 🔴 阻塞问题（必须修复）：列出所有 blocking 问题
-- 🟡 建议改进：列出所有建议改进项
-- 🟢 优化建议（可选）：列出所有优化建议
-- 总体评价：对代码变更的整体评价`;
-}
-
-/**
- * @deprecated Use buildPrompt instead
- * Build create MR prompt
- */
-export function buildCreateMRPrompt(
-  projectPath: string,
-  _defaultBranch: string,
-  issueIid: number,
-  issueTitle: string,
-  issueDescription: string,
-  comments: string
-): string {
-  const issueContext = `Issue #${issueIid}: ${issueTitle}\n\n描述：\n${issueDescription || '(无)'}\n\n评论：\n${comments || '(无)'}`;
-
-  return buildPrompt({
-    role: 'developer',
-    scenario: 'create-mr',
-    context: {
-      projectPath,
-      issue: { iid: issueIid, title: issueTitle, description: issueContext },
-    },
-  });
+  try {
+    const parsed = JSON.parse(jsonStr);
+    return {
+      summary: parsed.summary || '',
+      commitMessage: parsed.commit_message || '',
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ============ Exports ============

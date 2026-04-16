@@ -2,7 +2,7 @@ import { logInfo, logError, logDebug } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
-import { buildPrompt, parseIssueCategory, parseStructuredIssueAnalysis } from '../claude/prompts/index.js';
+import { buildSystemPrompt, parseIssueCategory, parseStructuredIssueAnalysis } from '../claude/prompts/index.js';
 import type { IssueWebhookPayload } from '../webhook/types.js';
 import { getEnv } from '../config/index.js';
 
@@ -69,7 +69,7 @@ export async function analyzeIssue(
     }
   }
 
-  const prompt = buildPrompt({
+  const systemPrompt = buildSystemPrompt({
     role: 'analyst',
     scenario: 'analyze-issue',
     context: {
@@ -85,9 +85,10 @@ export async function analyzeIssue(
   const cli = getClaudeCLI();
 
   try {
-    const response = await cli.prompt(prompt, {
+    const response = await cli.prompt('', {
       timeout: 120,
       workingDirectory,
+      systemPrompt,
     });
 
     // Try to parse structured data

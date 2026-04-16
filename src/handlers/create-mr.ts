@@ -2,7 +2,7 @@ import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
-import { buildPrompt, parseCreateMRResponse, validateResponse, generateRetryPrompt } from '../claude/prompts/index.js';
+import { buildSystemPrompt, parseCreateMRResponse, validateResponse, generateRetryPrompt } from '../claude/prompts/index.js';
 import type { IssueWebhookPayload } from '../webhook/types.js';
 import { getEnv, getProjectSettings } from '../config/index.js';
 import { AppError } from '../utils/errors.js';
@@ -57,15 +57,17 @@ async function callClaudeWithValidation(
     workingDirectory?: string;
     timeout?: number;
     maxRetries?: number;
+    systemPrompt?: string;
   } = {}
 ): Promise<string> {
-  const { workingDirectory, timeout = 300, maxRetries = 2 } = options;
+  const { workingDirectory, timeout = 300, maxRetries = 2, systemPrompt } = options;
   let currentPrompt = prompt;
 
   for (let i = 0; i <= maxRetries; i++) {
     const response = await cli.prompt(currentPrompt, {
       workingDirectory,
       timeout,
+      systemPrompt,
     });
 
     const validation = validateResponse(response);
@@ -186,7 +188,7 @@ export async function handleCreateMR(
 
     // Build prompt and call Claude CLI
     const issueContext = `Issue #${issue.iid}: ${issue.title}\n\n描述：\n${issue.description || '(无)'}\n\n评论：\n${notes.map((n) => `- ${n.author.username}: ${n.body}`).join('\n') || '(无)'}`;
-    const prompt = buildPrompt({
+    const systemPrompt = buildSystemPrompt({
       role: 'developer',
       scenario: 'create-mr',
       context: {
@@ -203,9 +205,10 @@ export async function handleCreateMR(
 
     logDebug({ event: 'claude_cli_call', issue_iid: iid }, 'Calling Claude CLI for code generation');
 
-    const response = await callClaudeWithValidation(cli, prompt, {
+    const response = await callClaudeWithValidation(cli, '', {
       workingDirectory: workspace.path,
       timeout: 300,
+      systemPrompt,
     });
 
     // Parse response

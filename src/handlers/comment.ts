@@ -2,7 +2,7 @@ import { logInfo, logDebug, logError, logWarn } from '../utils/logger.js';
 import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
-import { buildPrompt, validateResponse, generateRetryPrompt, parseResult } from '../claude/prompts/index.js';
+import { buildSystemPrompt, validateResponse, generateRetryPrompt, parseResult } from '../claude/prompts/index.js';
 import type { NoteWebhookPayload, IssueWebhookPayload } from '../webhook/types.js';
 import type { Note } from '../gitlab/types.js';
 import { getEnv } from '../config/index.js';
@@ -46,13 +46,14 @@ export function extractInstruction(comment: string): string | null {
 }
 
 /**
- * Build prompt for Issue comment using unified prompt system
+ * Build system prompt for Issue comment using unified prompt system
+ * Returns: { systemPrompt, userPrompt }
  */
 function buildIssuePromptForComment(
   payload: NoteWebhookPayload,
   instruction: string,
   history: Note[]
-): string {
+): { systemPrompt: string; userPrompt: string } {
   const project = payload.project;
   const user = payload.user;
 
@@ -71,7 +72,7 @@ function buildIssuePromptForComment(
       body: note.body,
     }));
 
-  return buildPrompt({
+  const systemPrompt = buildSystemPrompt({
     role: 'developer',
     scenario: 'comment-issue',
     context: {
@@ -83,12 +84,14 @@ function buildIssuePromptForComment(
       } : undefined,
       history: formattedHistory.length > 0 ? formattedHistory : undefined,
     },
-    task: instruction,
   });
+
+  return { systemPrompt, userPrompt: instruction };
 }
 
 /**
- * Build prompt for MR comment using unified prompt system
+ * Build system prompt for MR comment using unified prompt system
+ * Returns: { systemPrompt, userPrompt }
  */
 function buildMRPromptForComment(
   projectPath: string,
@@ -97,14 +100,14 @@ function buildMRPromptForComment(
   sourceBranch: string,
   instruction: string,
   history: Note[]
-): string {
+): { systemPrompt: string; userPrompt: string } {
   // Format history for unified prompt
   const formattedHistory = history.map((note) => ({
     author: note.author.username,
     body: note.body,
   }));
 
-  return buildPrompt({
+  const systemPrompt = buildSystemPrompt({
     role: 'developer',
     scenario: 'comment-mr',
     context: {
@@ -116,8 +119,9 @@ function buildMRPromptForComment(
       },
       history: formattedHistory.length > 0 ? formattedHistory : undefined,
     },
-    task: instruction,
   });
+
+  return { systemPrompt, userPrompt: instruction };
 }
 
 /**
@@ -322,12 +326,12 @@ export async function handleClaudeComment(
         );
       }
 
-      const prompt = buildMRPromptForComment(project.path_with_namespace, noteableIid, mr.title, sourceBranch, instruction, history);
-      logDebug({ event: 'claude_cli_call', prompt_length: prompt.length }, 'Calling Claude CLI for MR');
+      const { systemPrompt: builtSystemPrompt, userPrompt } = buildMRPromptForComment(project.path_with_namespace, noteableIid, mr.title, sourceBranch, instruction, history);
+      logDebug({ event: 'claude_cli_call', system_prompt_length: builtSystemPrompt.length, user_prompt_length: userPrompt.length }, 'Calling Claude CLI for MR');
 
-      response = await callClaudeWithValidation(cli, prompt, {
+      response = await callClaudeWithValidation(cli, userPrompt, {
         workingDirectory,
-        systemPrompt,
+        systemPrompt: systemPrompt || builtSystemPrompt,
       });
 
       // Try to parse [RESULT] structured block
@@ -389,12 +393,12 @@ ${responseContent}`;
     }
 
     // Issue: Claude decides autonomously
-    const prompt = buildIssuePromptForComment(payload, instruction, history);
-    logDebug({ event: 'claude_cli_call', prompt_length: prompt.length }, 'Calling Claude CLI for Issue');
+    const { systemPrompt: builtSystemPrompt, userPrompt } = buildIssuePromptForComment(payload, instruction, history);
+    logDebug({ event: 'claude_cli_call', system_prompt_length: builtSystemPrompt.length, user_prompt_length: userPrompt.length }, 'Calling Claude CLI for Issue');
 
-    response = await callClaudeWithValidation(cli, prompt, {
+    response = await callClaudeWithValidation(cli, userPrompt, {
       workingDirectory,
-      systemPrompt,
+      systemPrompt: systemPrompt || builtSystemPrompt,
     });
 
     // Check for uncommitted changes
