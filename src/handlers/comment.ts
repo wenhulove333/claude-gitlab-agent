@@ -406,7 +406,7 @@ ${responseText || '代码已修改并提交。'}
 
 **分支**：${sourceBranch}`;
       } else {
-        const responseContent = responseText || '已收到您的请求。';
+        const responseContent = responseText || '收到问题，但是没有任何回复，请重新提交。';
         postedResponse = `🤖 ${botName}：
 
 ${responseContent}`;
@@ -571,7 +571,7 @@ ${responseText || '代码已修改并提交。'}
       );
     } else {
       // No changes - post response
-      let responseContent = responseText.trim() || '已收到您的请求。';
+      let responseContent = responseText.trim() || '收到问题，但是没有任何回复，请重新提交。';
       const formattedResponse = `🤖 ${botName}：
 
 ${responseContent}`;
