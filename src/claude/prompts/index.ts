@@ -110,23 +110,27 @@ const ROLE_TEMPLATES: Record<Role, string> = {
 // ============ Scenario Task Templates ============
 
 const SCENARIO_TASKS: Record<Scenario, string> = {
-  'comment-issue': `回答用户的问题，或根据需要使用 Edit/Write 工具修改代码。
+  'comment-issue': `根据用户的意图决定是回答问题还是修改代码。
 
 **重要判断**：
-- 如果用户只是在询问或确认某些信息（使用方式、配置方法、概念解释、技术方案咨询等），请只回答问题，不要尝试修改代码
-- 只有当用户明确要求实现功能或修复问题时，才使用 Edit/Write 工具修改代码
+- 如果用户没有明确要求实现功能或修复问题，，请只回答问题，不要尝试修改代码
 
 如果需要修改代码：
 1. 使用 Edit 或 Write 工具修改代码
 2. **绝对不要执行任何 git 命令**
-3. 系统会自动检测代码变更并创建 MR`,
+3. 确保修改的代码符合项目规范和质量标准
+4. 确保编译和运行通过所有测试用例`,
 
-  'comment-mr': `回答用户的问题，或根据需要使用 Edit/Write 工具修改代码。
+  'comment-mr': `根据用户的意图决定是回答问题还是修改代码。
+
+**重要判断**：
+- 如果用户没有明确要求实现功能或修复问题，，请只回答问题，不要尝试修改代码
 
 如果需要修改代码：
 1. 使用 Edit 或 Write 工具修改代码
 2. **绝对不要执行任何 git 命令**
-3. 系统会自动检测代码变更并提交到 MR 的源分支`,
+3. 确保修改的代码符合项目规范和质量标准
+4. 确保编译和运行通过所有测试用例`,
 
   'analyze-issue': `分析 Issue 内容，生成详细的设计文档。
 
@@ -171,6 +175,7 @@ const CONSTRAINTS = {
 code_changed: true | false
 summary: "本次变更的简要说明（如果没有修改代码，则说明回答了什么问题）"
 changed_files: ["file1.ts", "file2.ts"]  # 如果没有修改代码，可以省略或留空
+commit_message: "提交信息"  # 如果修改了代码，此项为必填；如果没有修改代码，可以省略
 [/RESULT]
 
 然后输出 Markdown 格式的回答内容。`,
@@ -191,7 +196,7 @@ commit_message: "提交信息"
   ANALYSIS_OUTPUT: `**输出要求**：**必须**在设计文档之前输出以下结构化信息（使用此精确格式，以便程序解析）：
 
 [ANALYSIS]
-category: new_feature | improvement | bug_fix | not_related | unknown
+category: new_feature | improvement | bug_fix | not_related | query | unknown
 summary: 一句话总结（不超过50字）
 [/ANALYSIS]
 
