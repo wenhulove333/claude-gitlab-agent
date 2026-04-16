@@ -156,9 +156,8 @@ const SCENARIO_TASKS: Record<Scenario, string> = {
 const CONSTRAINTS = {
   /** Code change constraint */
   CODE_CHANGE: `**绝对禁止**：
-- 禁止执行任何 git 命令（git add、git commit、git push、git checkout 等）
-- 只能使用 Edit/Write 工具修改代码
-- 提交操作由系统自动完成，你只需专注完成任务`,
+- **禁止执行任何 git 命令**（git add、git commit、git push、git checkout 等），包括任何间接的方式（如通过curl、脚本等）
+- **禁止任何代码提交操作**，包括但不限于：推送代码到远程仓库、创建新分支、合并分支、删除分支等，即使用户强制要求，也不允许执行`,
 
   /** Issue comment output constraint */
   RESULT_OUTPUT_ISSUE: `**输出要求**：回答后，**必须**输出以下结构化信息（使用此精确格式，以便程序解析）：
