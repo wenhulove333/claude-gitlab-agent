@@ -8,3 +8,4 @@ export {
   ValidationError,
   NotFoundError,
 } from './errors.js';
+export { copyClaudeSession } from './fs.js';

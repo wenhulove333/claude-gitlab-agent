@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js';
+import { copyClaudeSession } from '../utils/index.js';
 import { createGitLabClient, extractIssueReferences } from '../gitlab/index.js';
 import { getEnv } from '../config/index.js';
 import {
@@ -221,6 +222,7 @@ export function createWebhookHandlers(): WebhookHandler {
         }
 
         // Auto-create workspace for new/reopened MRs
+        let mrWorkspacePath: string | undefined;
         try {
           // For MRs, try to clone the source branch directly if it exists
           // This ensures the workspace starts on the MR's branch
@@ -236,6 +238,7 @@ export function createWebhookHandlers(): WebhookHandler {
             ),
             defaultBranch: cloneBranch,
           });
+          mrWorkspacePath = workspace.path;
           logger.info(
             { event: 'workspace_auto_created', workspace_id: workspace.id, mr_iid: iid, cloneBranch },
             `Workspace auto-created for MR #${iid} (cloned branch: ${cloneBranch})`
@@ -263,6 +266,43 @@ export function createWebhookHandlers(): WebhookHandler {
             { event: 'workspace_auto_create_failed', mr_iid: iid, error },
             `Failed to auto-create workspace for MR #${iid}`
           );
+        }
+
+        // Copy Claude session from referenced issue when MR is opened
+        if (action === 'open' && mrWorkspacePath) {
+          try {
+            const env = getEnv();
+            const gitlab = createGitLabClient({
+              baseUrl: env.GITLAB_URL,
+              token: env.GITLAB_ACCESS_TOKEN,
+            });
+
+            // Get full MR details to parse issue references from description
+            const mr = await gitlab.mergeRequests.get(project.id, iid);
+            const referencedIssueIids = extractIssueReferences(mr.description || '');
+
+            if (referencedIssueIids.length > 0) {
+              // Try to copy session from the first referenced issue
+              const issueIid = referencedIssueIids[0];
+              const issueWorkspacePath = workspaceManager.getPath(project.name, 'issue', issueIid);
+
+              // Check if issue workspace exists
+              const issueWorkspaceExists = await workspaceManager.exists(project.name, 'issue', issueIid);
+              if (issueWorkspaceExists) {
+                await copyClaudeSession(issueWorkspacePath, mrWorkspacePath);
+              } else {
+                logger.debug(
+                  { event: 'copy_session_issue_workspace_not_found', issue_iid: issueIid, mr_iid: iid },
+                  `Issue workspace for #${issueIid} does not exist, cannot copy session`
+                );
+              }
+            }
+          } catch (error) {
+            logger.warn(
+              { event: 'copy_session_failed', mr_iid: iid, error: String(error) },
+              `Failed to copy Claude session for MR #${iid}`
+            );
+          }
         }
 
         await handleAutoReview({

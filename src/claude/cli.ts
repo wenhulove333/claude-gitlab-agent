@@ -261,8 +261,8 @@ export class ClaudeCLI {
     try {
       const entries = await fs.readdir(claudeDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory()) {
-          // Check if directory name is a valid UUID
+        if (entry.isFile()) {
+          // Check if file name is a valid UUID
           const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           if (uuidRegex.test(entry.name)) {
             return entry.name;
@@ -276,12 +276,15 @@ export class ClaudeCLI {
   }
 
   /**
-   * Create a new session directory
+   * Create a new session file
    */
   private async createNewSession(workingDirectory: string): Promise<string> {
     const uuid = randomUUID();
-    const sessionDir = join(workingDirectory, '.claude', uuid);
-    await fs.mkdir(sessionDir, { recursive: true });
+    const claudeDir = join(workingDirectory, '.claude');
+    const sessionFile = join(claudeDir, uuid);
+    await fs.mkdir(claudeDir, { recursive: true });
+    // Create an empty file to mark the session
+    await fs.writeFile(sessionFile, '');
     return uuid;
   }
 
@@ -308,7 +311,7 @@ export class ClaudeCLI {
         { event: 'claude_session_resume', sessionId: existingSession, cwd },
         `Resuming existing session: ${existingSession}`
       );
-      args.push('--resume');
+      args.push('--resume', existingSession);
     } else {
       const newSession = await this.createNewSession(cwd);
       logDebug(
