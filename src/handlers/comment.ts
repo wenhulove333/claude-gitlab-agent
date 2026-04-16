@@ -3,7 +3,7 @@ import { createGitLabClient } from '../gitlab/index.js';
 import { getClaudeCLI } from '../claude/index.js';
 import { WorkspaceManager } from '../workspace/manager.js';
 import { buildSystemPrompt, validateResponse, generateRetryPrompt, parseResult } from '../claude/prompts/index.js';
-import type { NoteWebhookPayload, IssueWebhookPayload } from '../webhook/types.js';
+import type { NoteWebhookPayload } from '../webhook/types.js';
 import type { Note } from '../gitlab/types.js';
 import { getEnv } from '../config/index.js';
 import simpleGit from 'simple-git';
