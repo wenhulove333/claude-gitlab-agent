@@ -85,7 +85,8 @@ export async function analyzeIssue(
   const cli = getClaudeCLI();
 
   try {
-    const response = await cli.prompt('', {
+    const userPrompt = '请分析这个 Issue 的内容，生成详细的设计文档。';
+    const response = await cli.prompt(userPrompt, {
       timeout: 120,
       workingDirectory,
       systemPrompt,

@@ -416,59 +416,89 @@ ${responseContent}`;
 
     // If there is structured code_changed info, prefer to use it
     const codeChanged = result?.code_changed ?? hasChanges;
-    const codeChangeInfo = result ? {
-      summary: result.summary || 'Code changes',
-      changedFiles: result.changed_files || [],
-      commitMessage: result.commit_message || 'Update code',
-    } : null;
 
-    // If there are code changes, create MR
-    if (codeChanged) {
-      logInfo({ event: 'code_changes_detected' }, 'Code changes detected, will create MR');
+    if (codeChanged && payload.issue) {
+      const commitMessage = result?.commit_message || 'Update code';
+      const summary = result?.summary || '代码变更';
 
-      const { handleCreateMR } = await import('./create-mr.js');
+      logInfo(
+        { event: 'git_commit_push', issue_iid: payload.issue.iid, commitMessage },
+        `Committing and pushing changes for Issue #${payload.issue.iid}`
+      );
 
+      // Get issue details for labels and branch naming
+      const issue = await gitlab.issues.get(project.id, payload.issue.iid);
+
+      // Extract category from issue labels for branch naming
+      const labelToPrefix: Record<string, string> = {
+        feature: 'feature',
+        improvement: 'improvement',
+        bug: 'fix',
+        wontfix: 'wontfix',
+        'needs-triage': 'task',
+      };
+      const issueLabels = issue.labels || [];
+      const categoryPrefix = issueLabels
+        .map((l: string) => labelToPrefix[l] || 'task')
+        .find((p: string) => p !== 'task') || 'task';
+
+      // Generate branch name
+      const shortDesc = summary
+        .toLowerCase()
+        .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '-')
+        .replace(/-+/g, '-')
+        .slice(0, 20);
+      const branchName = `${categoryPrefix}/issue-${payload.issue.iid}-${shortDesc}`;
+
+      // Create branch, commit and push
+      await git.add('.');
+      await git.commit(commitMessage);
+      await git.push('origin', `HEAD:refs/heads/${branchName}`, ['--set-upstream']);
+
+      logInfo({ event: 'git_push_completed', branch: branchName }, 'Changes pushed to new branch');
+
+      // Create MR
+      const mrTitle = `[${botName}] ${payload.issue.title} #${payload.issue.iid}`;
+      const mrDescription = `此 MR 由 ${botName} 基于 Issue #${payload.issue.iid} 的评论自动创建。
+
+**${botName} 的变更**:
+${summary}
+
+**变更文件**:
+${(result?.changed_files || status.modified || []).map((f: string) => `- ${f}`).join('\n')}
+
+**人工审查提醒**：请在合并前验证变更是否符合预期。`;
+
+      const mr = await gitlab.client.post<{ web_url: string }>(
+        `/projects/${project.id}/merge_requests`,
+        {
+          source_branch: branchName,
+          target_branch: project.default_branch,
+          title: mrTitle,
+          description: mrDescription,
+          remove_source_branch: false,
+        }
+      );
+
+      // Post response with MR link
       const formattedResponse = `🤖 ${botName}：
 
-${responseText}
+${responseText || '代码已修改并提交。'}
 
 ---
 
-**代码变更**：${codeChangeInfo?.summary || '代码变更'}
+**代码变更**：${summary}
 
-**变更文件**：
-${(codeChangeInfo?.changedFiles || status.modified || []).map((f: string) => `- ${f}`).join('\n')}
+**提交信息**：${commitMessage}
 
-**提交信息**：${codeChangeInfo?.commitMessage || '更新代码'}
-
-正在创建 MR...`;
+**MR 链接**：${mr.web_url}`;
 
       await gitlab.notes.create(project.id, noteableIid, formattedResponse, noteableType);
 
-      if (payload.issue) {
-        // Note: handleCreateMR will fetch the issue details itself to get labels for branch naming
-        const issuePayload: IssueWebhookPayload = {
-          object_kind: 'issue',
-          event_type: 'Issue Hook',
-          object_attributes: {
-            id: 0,
-            iid: payload.issue.iid,
-            title: payload.issue.title,
-            description: '',
-            state: 'opened',
-            action: 'open',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            labels: [],
-          },
-          project: payload.project,
-          user: payload.user,
-        };
-
-        await handleCreateMR({ payload: issuePayload }).catch((err) => {
-          logError({ event: 'create_mr_failed', error: String(err) }, 'Failed to create MR');
-        });
-      }
+      logInfo(
+        { event: 'claude_issue_completed', codeChanged, mr_url: mr.web_url },
+        `Issue comment processed, code_changed=${codeChanged}, MR created`
+      );
     } else {
       // No changes - post response
       let responseContent = responseText.trim() || '已收到您的请求。';

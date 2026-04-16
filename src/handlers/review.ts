@@ -184,7 +184,8 @@ export async function handleAutoReview(
 
     logDebug({ event: 'claude_review_call', mr_iid: iid }, 'Calling Claude for review');
 
-    const response = await cli.prompt('', {
+    const userPrompt = '请审查上面的代码变更，给出审查意见。';
+    const response = await cli.prompt(userPrompt, {
       timeout: 120, // 2 minutes for review
       systemPrompt,
     });

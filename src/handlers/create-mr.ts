@@ -205,7 +205,8 @@ export async function handleCreateMR(
 
     logDebug({ event: 'claude_cli_call', issue_iid: iid }, 'Calling Claude CLI for code generation');
 
-    const response = await callClaudeWithValidation(cli, '', {
+    const userPrompt = '请根据上面的 Issue 需求，实现代码变更。';
+    const response = await callClaudeWithValidation(cli, userPrompt, {
       workingDirectory: workspace.path,
       timeout: 300,
       systemPrompt,
