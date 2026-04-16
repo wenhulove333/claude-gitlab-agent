@@ -249,16 +249,6 @@ export function createWebhookHandlers(): WebhookHandler {
         try {
           const cloneBranch = source_branch || project.default_branch;
 
-          // If workspace exists, delete it first to ensure a fresh clone
-          const workspaceExists = await workspaceManager.exists(project.name, workspaceType, workspaceIid);
-          if (workspaceExists) {
-            logger.info(
-              { event: 'workspace_delete_before_create', workspace_type: workspaceType, workspace_iid: workspaceIid },
-              `Deleting existing ${workspaceType} workspace #${workspaceIid} before creating fresh one for MR #${iid}`
-            );
-            await workspaceManager.delete(project.name, workspaceType, workspaceIid);
-          }
-
           const workspace = await workspaceManager.getOrCreate({
             type: workspaceType,
             projectId: project.id,
