@@ -305,24 +305,25 @@ export async function handleClaudeComment(
         `Processing MR comment: ${sourceBranch}`
       );
 
-      // Switch to source branch if needed
+      // Reset workspace to remote source branch to ensure local matches remote
       const git = simpleGit(workingDirectory);
       try {
         const currentBranch = (await git.branch()).current;
+        logInfo(
+          { event: 'workspace_reset_branch', from: currentBranch, to: sourceBranch },
+          `Resetting workspace to MR source branch`
+        );
+        await git.fetch('origin', sourceBranch);
+        await git.reset(['--hard', `origin/${sourceBranch}`]);
         if (currentBranch !== sourceBranch) {
-          logInfo(
-            { event: 'workspace_switch_branch', from: currentBranch, to: sourceBranch },
-            `Switching workspace to MR source branch`
-          );
-          await git.fetch('origin', sourceBranch);
           await git.checkout(['-B', sourceBranch, `origin/${sourceBranch}`]).catch(async () => {
             await git.checkout(sourceBranch);
           });
         }
       } catch (branchError) {
         logWarn(
-          { event: 'branch_switch_failed', error: String(branchError) },
-          'Failed to switch to source branch, continuing with current branch'
+          { event: 'branch_reset_failed', error: String(branchError) },
+          'Failed to reset to source branch, continuing with current branch'
         );
       }
 
