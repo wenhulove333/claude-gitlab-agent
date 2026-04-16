@@ -1,5 +1,8 @@
 import { spawn, execSync } from 'child_process';
 import { platform } from 'os';
+import { randomUUID } from 'crypto';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 import { ClaudeCLIError } from '../utils/errors.js';
 import { logDebug, logError, logInfo } from '../utils/logger.js';
 import { getEnv } from '../config/index.js';
@@ -251,6 +254,38 @@ export class ClaudeCLI {
   }
 
   /**
+   * Find existing session UUID in .claude directory
+   */
+  private async findExistingSession(workingDirectory: string): Promise<string | null> {
+    const claudeDir = join(workingDirectory, '.claude');
+    try {
+      const entries = await fs.readdir(claudeDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          // Check if directory name is a valid UUID
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(entry.name)) {
+            return entry.name;
+          }
+        }
+      }
+    } catch {
+      // .claude directory doesn't exist or can't be read
+    }
+    return null;
+  }
+
+  /**
+   * Create a new session directory
+   */
+  private async createNewSession(workingDirectory: string): Promise<string> {
+    const uuid = randomUUID();
+    const sessionDir = join(workingDirectory, '.claude', uuid);
+    await fs.mkdir(sessionDir, { recursive: true });
+    return uuid;
+  }
+
+  /**
    * Send a prompt and get the response using --print flag
    */
   async prompt(prompt: string, options: ClaudePromptOptions = {}): Promise<string> {
@@ -263,7 +298,25 @@ export class ClaudeCLI {
       env,
     } = options;
 
+    const cwd = workingDirectory ?? process.cwd();
     const args = ['--print', '--dangerously-skip-permissions'];
+
+    // Check for existing session or create new one
+    const existingSession = await this.findExistingSession(cwd);
+    if (existingSession) {
+      logDebug(
+        { event: 'claude_session_resume', sessionId: existingSession, cwd },
+        `Resuming existing session: ${existingSession}`
+      );
+      args.push('--resume');
+    } else {
+      const newSession = await this.createNewSession(cwd);
+      logDebug(
+        { event: 'claude_session_create', sessionId: newSession, cwd },
+        `Creating new session: ${newSession}`
+      );
+      args.push('--session-id', newSession);
+    }
 
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
